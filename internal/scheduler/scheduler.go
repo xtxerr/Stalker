@@ -16,12 +16,11 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/xtxerr/stalker/internal/config"
+	"github.com/xtxerr/stalker/config"
 	"github.com/xtxerr/stalker/internal/logging"
 )
 
@@ -41,48 +40,6 @@ type PollerKey struct {
 // String returns the string representation of the key.
 func (k PollerKey) String() string {
 	return k.Namespace + "/" + k.Target + "/" + k.Poller
-}
-
-// ParsePollerKey parses a string into a PollerKey.
-//
-// FIX #20: Changed from fmt.Sscanf to strings.SplitN.
-// The previous implementation used fmt.Sscanf with %s which reads until
-// whitespace, not until '/'. This caused parsing to fail for all valid keys.
-//
-// Example:
-//   Input: "ns1/target1/poller1"
-//   Old behavior: Sscanf reads entire string into first %s → n=1 → error
-//   New behavior: SplitN correctly splits → ["ns1", "target1", "poller1"]
-func ParsePollerKey(s string) (PollerKey, error) {
-	if s == "" {
-		return PollerKey{}, fmt.Errorf("empty poller key")
-	}
-
-	parts := strings.SplitN(s, "/", 3)
-	if len(parts) != 3 {
-		return PollerKey{}, fmt.Errorf("invalid poller key format: %s (expected 'namespace/target/poller')", s)
-	}
-
-	// Validate that all parts are non-empty
-	if parts[0] == "" || parts[1] == "" || parts[2] == "" {
-		return PollerKey{}, fmt.Errorf("invalid poller key: empty component in %s", s)
-	}
-
-	return PollerKey{
-		Namespace: parts[0],
-		Target:    parts[1],
-		Poller:    parts[2],
-	}, nil
-}
-
-// MustParsePollerKey parses a key string, panics on error.
-// Use only for known-valid keys (e.g., in tests or with constants).
-func MustParsePollerKey(s string) PollerKey {
-	k, err := ParsePollerKey(s)
-	if err != nil {
-		panic(err)
-	}
-	return k
 }
 
 // PollJob represents a poll job to be executed.

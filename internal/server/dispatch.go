@@ -2,7 +2,6 @@ package server
 
 import (
 	"fmt"
-	"log"
 
 	"github.com/xtxerr/stalker/internal/handler"
 	"github.com/xtxerr/stalker/internal/store"
@@ -508,6 +507,3 @@ func MakeErrorResponse(id uint64, err error) interface{} {
 	}
 	return wire.NewError(id, wire.ErrInternal, err.Error())
 }
-
-// Use log to avoid unused import
-var _ = log.Printf

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"sort"
 	"strings"
 	"text/tabwriter"
 )
@@ -658,6 +657,3 @@ func resolvePath(path string) string {
 
 	return "/" + strings.Join(normalized, "/")
 }
-
-// Keep sort package referenced
-var _ = sort.Strings

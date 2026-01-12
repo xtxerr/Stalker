@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/xtxerr/stalker/internal/config"
+	"github.com/xtxerr/stalker/config"
 	"github.com/xtxerr/stalker/internal/logging"
 	"github.com/xtxerr/stalker/internal/store"
 	"golang.org/x/sync/singleflight"

@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/xtxerr/stalker/internal/config"
+	"github.com/xtxerr/stalker/config"
 	"github.com/xtxerr/stalker/internal/errors"
 	"github.com/xtxerr/stalker/internal/manager"
 	"github.com/xtxerr/stalker/internal/store"

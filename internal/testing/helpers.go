@@ -219,9 +219,10 @@ func ExampleTestHelper() {
 // Timeout Helper
 // =============================================================================
 
-// WithTimeout runs a function with a timeout.
+// RunWithTimeout runs a function with a timeout.
 // Returns error if function doesn't complete in time.
-func WithTimeout(timeout time.Duration, fn func()) error {
+// Note: Use WithTimeout from testutil.go if the function returns an error.
+func RunWithTimeout(timeout time.Duration, fn func()) error {
 	done := make(chan struct{})
 
 	go func() {

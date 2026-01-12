@@ -8,7 +8,6 @@ import (
 	"database/sql"
 	"fmt"
 	"path"
-	"regexp"
 	"strings"
 	"time"
 )
@@ -554,6 +553,3 @@ func normalizePath(p string) string {
 	}
 	return p
 }
-
-// Compile regex pattern for path matching
-var _ = regexp.MustCompile // Ensure import is used

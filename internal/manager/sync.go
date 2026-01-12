@@ -16,7 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/xtxerr/stalker/internal/config"
+	"github.com/xtxerr/stalker/config"
 	"github.com/xtxerr/stalker/internal/logging"
 	"github.com/xtxerr/stalker/internal/store"
 )

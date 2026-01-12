@@ -10,7 +10,7 @@ import (
 	"io"
 	"sync"
 
-	"github.com/xtxerr/stalker/internal/config"
+	"github.com/xtxerr/stalker/config"
 	"github.com/xtxerr/stalker/internal/errors"
 	pb "github.com/xtxerr/stalker/internal/proto"
 	"google.golang.org/protobuf/encoding/protodelim"

@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/xtxerr/stalker/internal/config"
+	"github.com/xtxerr/stalker/config"
 	"github.com/xtxerr/stalker/internal/handler"
 	"github.com/xtxerr/stalker/internal/logging"
 	"github.com/xtxerr/stalker/internal/manager"
@@ -159,9 +159,26 @@ func (rl *RateLimiter) cleanup() {
 
 // Config holds server configuration.
 type Config struct {
-	Listen      string
+	// Manager is the entity manager (required).
+	Manager *manager.Manager
+
+	// Listen is the address to listen on (e.g., "0.0.0.0:9161").
+	Listen string
+
+	// TLS configuration (optional).
 	TLSCertFile string
 	TLSKeyFile  string
+
+	// Authentication tokens.
+	Tokens []handler.TokenConfig
+
+	// Session settings.
+	AuthTimeoutSec     int
+	ReconnectWindowSec int
+
+	// Scheduler settings.
+	PollerWorkers   int
+	PollerQueueSize int
 }
 
 // =============================================================================
@@ -184,10 +201,34 @@ type Server struct {
 }
 
 // New creates a new server.
-func New(cfg *Config, mgr *manager.Manager, sessions *handler.SessionManager, sched *scheduler.Scheduler) *Server {
+func New(cfg *Config) *Server {
+	// Apply defaults
+	if cfg.AuthTimeoutSec == 0 {
+		cfg.AuthTimeoutSec = config.DefaultAuthTimeoutSec
+	}
+	if cfg.PollerWorkers == 0 {
+		cfg.PollerWorkers = config.DefaultPollerWorkers
+	}
+	if cfg.PollerQueueSize == 0 {
+		cfg.PollerQueueSize = config.DefaultPollerQueueSize
+	}
+
+	// Create session manager
+	sessions := handler.NewSessionManager(&handler.SessionManagerConfig{
+		AuthTimeout:     time.Duration(cfg.AuthTimeoutSec) * time.Second,
+		CleanupInterval: time.Duration(config.DefaultSessionCleanupIntervalSec) * time.Second,
+		Tokens:          cfg.Tokens,
+	})
+
+	// Create scheduler
+	sched := scheduler.New(&scheduler.Config{
+		Workers:   cfg.PollerWorkers,
+		QueueSize: cfg.PollerQueueSize,
+	})
+
 	return &Server{
 		cfg:       cfg,
-		mgr:       mgr,
+		mgr:       cfg.Manager,
 		sessions:  sessions,
 		scheduler: sched,
 		shutdown:  make(chan struct{}),
