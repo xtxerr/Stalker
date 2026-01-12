@@ -77,7 +77,6 @@ type ConfigResolver struct {
 	// Primary cache: key → config entry
 	cache sync.Map
 
-	// FIX #10: Secondary index for efficient namespace invalidation
 	// Maps namespace → set of cache keys
 	// This allows O(1) invalidation of all configs in a namespace
 	// instead of O(n) iteration over all cache entries.
@@ -172,7 +171,6 @@ func (r *ConfigResolver) doResolve(namespace, target, poller string) (*ResolvedP
 		createdAt: time.Now(),
 	})
 
-	// FIX #10: Update secondary index
 	r.addToNamespaceIndex(namespace, key)
 
 	return result, nil
@@ -328,8 +326,6 @@ func (r *ConfigResolver) Invalidate(namespace, target, poller string) {
 func (r *ConfigResolver) InvalidateTarget(namespace, target string) {
 	prefix := namespace + "/" + target + "/"
 
-	// FIX #10: Use secondary index if target has many pollers
-	// For targets, we still iterate as there's no target-level index
 	r.cache.Range(func(key, value interface{}) bool {
 		if k, ok := key.(string); ok {
 			if len(k) > len(prefix) && k[:len(prefix)] == prefix {
@@ -345,9 +341,6 @@ func (r *ConfigResolver) InvalidateTarget(namespace, target string) {
 
 // InvalidateNamespace removes all cached configs for pollers in a namespace.
 //
-// FIX #10: This now uses a secondary index for O(1) lookup instead of
-// iterating over all cache entries (O(n)). The previous implementation
-// used sync.Map.Range which doesn't scale well for large caches.
 func (r *ConfigResolver) InvalidateNamespace(namespace string) {
 	r.byNamespaceMu.Lock()
 	keys, ok := r.byNamespace[namespace]

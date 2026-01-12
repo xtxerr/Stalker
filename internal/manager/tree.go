@@ -2,7 +2,6 @@
 //
 // This file contains tree-related operations.
 //
-// FIX #5: Proper bounds checking for ParseLinkRef
 package manager
 
 import (
@@ -39,17 +38,10 @@ func NewTreeManager(s *store.Store) *TreeManager {
 }
 
 // =============================================================================
-// FIX #5: ParseLinkRef with Proper Bounds Checking
 // =============================================================================
 
 // ParseLinkRef parses a link reference from the database format.
 //
-// FIX #5: This function now properly validates that both target and poller
-// components are non-empty, preventing panics on malformed input.
-//
-// Input formats:
-//   - "target:router-1" -> linkType="target", target="router-1", poller=""
-//   - "poller:router-1/cpu" -> linkType="poller", target="router-1", poller="cpu"
 func ParseLinkRef(ref string) (linkType string, target string, poller string, err error) {
 	if ref == "" {
 		return "", "", "", fmt.Errorf("empty link reference")
@@ -107,7 +99,6 @@ func (l *LinkInfo) String() string {
 }
 
 // =============================================================================
-// FIX #5: Helper Functions with Validation
 // =============================================================================
 
 // BuildTargetLinkRef builds a target link reference string.

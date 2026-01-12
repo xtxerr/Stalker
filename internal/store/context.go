@@ -1,12 +1,8 @@
 // Package store - Context-aware Transaction Support
 //
-// FIX #23: This file provides the corrected TransactionContext implementation.
-//
-// WICHTIG: Diese Datei enthält NUR TransactionContext und die Helper-Methode.
 // Die anderen Context-aware Methoden (InsertSamplesBatchContext, etc.) sind
 // bereits in den jeweiligen Dateien (sample.go, poller.go, etc.) definiert.
 //
-// INSTALLATION:
 // 1. Falls store.go eine TransactionContext Methode hat, diese ENTFERNEN
 // 2. Falls store.go eine Transaction Methode hat, diese ENTFERNEN
 // 3. Diese Datei nach internal/store/ kopieren
@@ -39,15 +35,6 @@ func (s *Store) defaultContext() (context.Context, context.CancelFunc) {
 
 // TransactionContext executes fn within a transaction.
 //
-// FIX #23: This implementation checks the context BEFORE commit to prevent
-// committing after a timeout has occurred. This is the canonical implementation.
-//
-// Key safety features:
-//   - Checks context before starting transaction
-//   - Recovers from panics and rolls back
-//   - Checks context AGAIN before commit (critical!)
-//   - Logs rollback errors during panic recovery (FIX #24)
-//   - Proper error wrapping for debugging
 func (s *Store) TransactionContext(ctx context.Context, fn func(*sql.Tx) error) error {
 	// Check context before starting
 	if err := ctx.Err(); err != nil {
@@ -62,7 +49,6 @@ func (s *Store) TransactionContext(ctx context.Context, fn func(*sql.Tx) error) 
 	// Ensure rollback on panic
 	defer func() {
 		if p := recover(); p != nil {
-			// FIX #24: Log rollback error during panic recovery
 			if rbErr := tx.Rollback(); rbErr != nil {
 				// Note: In production, use your logging package here instead of fmt
 				// e.g.: log.Error("rollback failed during panic recovery", "error", rbErr)

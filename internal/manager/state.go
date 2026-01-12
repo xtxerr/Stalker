@@ -3,8 +3,6 @@
 // This file defines PollerState for runtime state tracking and StateManager
 // for managing multiple poller states.
 //
-// FIX #7: PollerStats and StatsManager have been moved to stats.go to eliminate
-// the duplicate definition that previously existed in this file.
 package manager
 
 import (

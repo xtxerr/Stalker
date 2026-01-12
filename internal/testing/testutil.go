@@ -1,7 +1,5 @@
 // Package testing provides test utilities for the stalker project.
 //
-// FIX #18: This package provides utilities for safe testing with goroutines,
-// including the error channel pattern to avoid t.Fatal in goroutines.
 package testing
 
 import (
@@ -13,7 +11,6 @@ import (
 )
 
 // =============================================================================
-// Error Channel Pattern (FIX #18)
 // =============================================================================
 
 // GoroutineTest provides safe testing utilities for goroutines.

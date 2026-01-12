@@ -72,12 +72,10 @@ type PollerStatsRecord struct {
 }
 
 // =============================================================================
-// Update Result Types (Fix #20)
 // =============================================================================
 
 // UpdatePollerResult contains detailed information about an update attempt.
 //
-// FIX #20: This type allows callers to distinguish between "not found" and
 // "version mismatch" when an update fails. The previous implementation only
 // returned ErrConcurrentModification for both cases.
 type UpdatePollerResult struct {
@@ -259,9 +257,6 @@ func scanPollers(rows *sql.Rows) ([]*Poller, error) {
 
 // UpdatePoller updates a poller with optimistic locking.
 //
-// FIX #20: This method now returns ErrPollerNotFound when the entity doesn't exist,
-// and ErrConcurrentModification when the version doesn't match. The previous
-// implementation couldn't distinguish between these two cases.
 func (s *Store) UpdatePoller(p *Poller) error {
 	result, err := s.UpdatePollerWithResult(p)
 	if err != nil {
@@ -280,9 +275,6 @@ func (s *Store) UpdatePoller(p *Poller) error {
 
 // UpdatePollerWithResult updates a poller and returns detailed result information.
 //
-// FIX #20 (Variant 2): This method returns the current version when a version
-// mismatch occurs, allowing callers to implement optimistic concurrency control
-// patterns like "retry with current version".
 func (s *Store) UpdatePollerWithResult(p *Poller) (*UpdatePollerResult, error) {
 	pollingJSON, err := json.Marshal(p.PollingConfig)
 	if err != nil {
@@ -307,7 +299,6 @@ func (s *Store) UpdatePollerWithResult(p *Poller) (*UpdatePollerResult, error) {
 	}
 
 	if rows == 0 {
-		// FIX #20: Check if entity exists to distinguish not found vs version mismatch
 		var currentVersion int
 		err := s.db.QueryRow(`
 			SELECT version FROM pollers 

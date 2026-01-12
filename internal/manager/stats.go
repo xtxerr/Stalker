@@ -3,8 +3,6 @@
 // This file defines the PollerStats type for tracking runtime statistics
 // and the StatsManager for managing multiple poller statistics.
 //
-// FIX #7: This is the canonical definition of PollerStats. The duplicate
-// definition that was previously in state.go has been removed.
 package manager
 
 import (
@@ -20,8 +18,6 @@ import (
 // PollerStats tracks runtime statistics for a poller.
 //
 // This type is the canonical definition used throughout the codebase.
-// FIX #7: The duplicate definition in state.go has been removed.
-//
 // PollerStats is safe for concurrent use. Counters use atomic operations
 // for lock-free updates, while timing statistics are protected by a mutex.
 type PollerStats struct {

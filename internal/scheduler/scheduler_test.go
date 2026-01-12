@@ -150,7 +150,6 @@ func TestSchedulerBasic(t *testing.T) {
 }
 
 func TestSchedulerRemoveDuringPolling(t *testing.T) {
-	// This test verifies FIX #21 - memory leak when removing during polling
 	sched := New(&Config{
 		Workers:   1, // Single worker to control timing
 		QueueSize: 100,

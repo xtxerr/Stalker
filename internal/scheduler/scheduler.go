@@ -317,12 +317,6 @@ func (s *Scheduler) Add(key PollerKey, intervalMs uint32) {
 
 // Remove removes a poller from the scheduler.
 //
-// FIX #21: Fixed memory leak when removing pollers that are currently polling.
-// The previous implementation deleted from heapIdx immediately, but if the
-// poller was currently polling (Polling=true), the item stayed in the heap
-// with deleted=true and was never cleaned up because MarkComplete couldn't
-// find it in heapIdx.
-//
 // New behavior:
 //   - If not polling: remove from both heap and heapIdx immediately
 //   - If polling: mark as deleted, keep in heapIdx so MarkComplete can clean up
@@ -422,7 +416,6 @@ func (s *Scheduler) processDueItems() {
 
 		// Skip and clean up deleted items
 		if item.deleted {
-			// FIX #21: Also clean up from heapIdx if present
 			keyStr := item.Key.String()
 			delete(s.heapIdx, keyStr)
 			continue
@@ -458,7 +451,6 @@ func (s *Scheduler) MarkComplete(key PollerKey) {
 		return // Already removed
 	}
 
-	// FIX #21: Check if deleted while polling and clean up
 	if item.deleted {
 		delete(s.heapIdx, keyStr)
 		// Item is already out of heap (was popped in processDueItems)
@@ -493,7 +485,6 @@ func (s *Scheduler) worker(ctx context.Context) {
 				return // Channel closed
 			}
 
-			// FIX #2: Execute poll with panic recovery
 			result := s.executeWithRecovery(ctx, job.Key)
 
 			// Mark complete to reschedule
@@ -514,14 +505,10 @@ func (s *Scheduler) worker(ctx context.Context) {
 
 // executeWithRecovery executes a poll with proper counter management and panic recovery.
 //
-// FIX #2: This function ensures that activeWorkers and pollsActive counters
-// are always decremented, even if executePoll panics. The previous implementation
-// could leak counters if a panic occurred during poll execution.
 func (s *Scheduler) executeWithRecovery(ctx context.Context, key PollerKey) (result PollResult) {
 	s.activeWorkers.Add(1)
 	s.pollsActive.Add(1)
 
-	// FIX #2: Defer counter decrement to ensure cleanup even on panic
 	defer func() {
 		s.pollsActive.Add(-1)
 		s.activeWorkers.Add(-1)

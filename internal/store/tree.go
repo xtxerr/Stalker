@@ -70,10 +70,6 @@ func (s *Store) CreateTreeDirectory(namespace, nodePath, description string) err
 // validateLinkName validates that a link name is safe and doesn't contain
 // path traversal characters.
 //
-// FIX #8: This function prevents path traversal attacks by rejecting link names
-// that contain path separators or special directory references. Without this
-// validation, an attacker could create links like "../../../admin" to escape
-// the intended directory structure.
 func validateLinkName(linkName string) error {
 	// Check for empty name
 	if linkName == "" {
@@ -110,9 +106,7 @@ func validateLinkName(linkName string) error {
 
 // CreateTreeLink creates a symlink to a target or poller.
 //
-// FIX #8: This function now validates linkName to prevent path traversal.
 func (s *Store) CreateTreeLink(namespace, treePath, linkName, linkType, linkRef string) error {
-	// FIX #8: Validate link name to prevent path traversal
 	if err := validateLinkName(linkName); err != nil {
 		return fmt.Errorf("invalid link name: %w", err)
 	}
@@ -120,7 +114,6 @@ func (s *Store) CreateTreeLink(namespace, treePath, linkName, linkType, linkRef 
 	treePath = normalizePath(treePath)
 	fullPath := path.Join(treePath, linkName)
 
-	// FIX #8: Additional validation - ensure fullPath stays under treePath
 	// This catches edge cases that might slip through validateLinkName
 	if !strings.HasPrefix(normalizePath(fullPath), treePath) && treePath != "/" {
 		return fmt.Errorf("path traversal detected: resulting path would escape base directory")

@@ -1,8 +1,5 @@
 // Package sync provides thread-safe synchronization primitives.
 //
-// FIX #4: This package provides a thread-safe resettable Once that can be
-// safely reset for reconnection scenarios, unlike sync.Once which cannot
-// be safely reset while other goroutines might be calling Do().
 package sync
 
 import (

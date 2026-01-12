@@ -1,8 +1,5 @@
 // Package sync - Store Adapters for Sync Engine
 //
-// FIX #22: Changed all SQL placeholders from PostgreSQL-style ($1, $2, ...)
-// to DuckDB/SQLite-style (?, ?, ...). DuckDB does not support $N placeholders.
-//
 // This file provides SyncStore implementations for:
 //   - Namespaces
 //   - Targets
@@ -16,6 +13,7 @@ package sync
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -72,7 +70,14 @@ func (s *NamespaceSyncStore) ListAll(ctx context.Context, namespace string) ([]*
 		if source.Valid {
 			ns.Source = source.String
 		}
-		// TODO: Parse config JSON if needed
+
+		// Parse config JSON
+		if config.Valid && config.String != "" {
+			ns.Config = &store.NamespaceConfig{}
+			if err := json.Unmarshal([]byte(config.String), ns.Config); err != nil {
+				return nil, fmt.Errorf("unmarshal namespace config for %s: %w", ns.Name, err)
+			}
+		}
 
 		result = append(result, WrapNamespace(ns))
 	}
@@ -81,14 +86,11 @@ func (s *NamespaceSyncStore) ListAll(ctx context.Context, namespace string) ([]*
 }
 
 // BulkCreate implements SyncStore.
-//
-// FIX #22: Changed from PostgreSQL $N placeholders to DuckDB ? placeholders.
 func (s *NamespaceSyncStore) BulkCreate(ctx context.Context, entities []*SyncableNamespace) error {
 	if len(entities) == 0 {
 		return nil
 	}
 
-	// Build bulk insert with ? placeholders (DuckDB compatible)
 	var values []string
 	var args []interface{}
 
@@ -124,15 +126,11 @@ func (s *NamespaceSyncStore) BulkUpdate(ctx context.Context, entities []*Syncabl
 }
 
 // BulkDelete implements SyncStore.
-//
-// FIX #22: Changed from PostgreSQL $N placeholders to DuckDB ? placeholders.
-// Also simplified to use individual deletes for better error handling.
 func (s *NamespaceSyncStore) BulkDelete(ctx context.Context, keys []string) error {
 	if len(keys) == 0 {
 		return nil
 	}
 
-	// Build IN clause with ? placeholders
 	placeholders := make([]string, len(keys))
 	args := make([]interface{}, len(keys))
 	for i, key := range keys {
@@ -163,8 +161,6 @@ func NewTargetSyncStore(db *sql.DB) *TargetSyncStore {
 }
 
 // ListAll implements SyncStore.
-//
-// FIX #22: Changed from PostgreSQL $1 placeholder to DuckDB ? placeholder.
 func (s *TargetSyncStore) ListAll(ctx context.Context, namespace string) ([]*SyncableTarget, error) {
 	query := `
 		SELECT namespace, name, description, labels, config, source, created_at, updated_at, version
@@ -206,7 +202,21 @@ func (s *TargetSyncStore) ListAll(ctx context.Context, namespace string) ([]*Syn
 		if source.Valid {
 			t.Source = source.String
 		}
-		// TODO: Parse labels and config JSON
+
+		// Parse labels JSON
+		if labels.Valid && labels.String != "" {
+			if err := json.Unmarshal([]byte(labels.String), &t.Labels); err != nil {
+				return nil, fmt.Errorf("unmarshal target labels for %s/%s: %w", t.Namespace, t.Name, err)
+			}
+		}
+
+		// Parse config JSON
+		if config.Valid && config.String != "" {
+			t.Config = &store.TargetConfig{}
+			if err := json.Unmarshal([]byte(config.String), t.Config); err != nil {
+				return nil, fmt.Errorf("unmarshal target config for %s/%s: %w", t.Namespace, t.Name, err)
+			}
+		}
 
 		result = append(result, WrapTarget(t))
 	}
@@ -277,8 +287,6 @@ func NewPollerSyncStore(db *sql.DB) *PollerSyncStore {
 }
 
 // ListAll implements SyncStore.
-//
-// FIX #22: Changed from PostgreSQL $1 placeholder to DuckDB ? placeholder.
 func (s *PollerSyncStore) ListAll(ctx context.Context, namespace string) ([]*SyncablePoller, error) {
 	query := `
 		SELECT namespace, target, name, description, protocol, protocol_config, 
@@ -324,7 +332,14 @@ func (s *PollerSyncStore) ListAll(ctx context.Context, namespace string) ([]*Syn
 		if source.Valid {
 			p.Source = source.String
 		}
-		// TODO: Parse polling config JSON
+
+		// Parse polling config JSON
+		if pollingConfig.Valid && pollingConfig.String != "" {
+			p.PollingConfig = &store.PollingConfig{}
+			if err := json.Unmarshal([]byte(pollingConfig.String), p.PollingConfig); err != nil {
+				return nil, fmt.Errorf("unmarshal polling config for %s/%s/%s: %w", p.Namespace, p.Target, p.Name, err)
+			}
+		}
 
 		result = append(result, WrapPoller(p))
 	}

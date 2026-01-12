@@ -1,8 +1,5 @@
 // Package client provides a client for connecting to the stalker server.
 //
-// FIXES APPLIED:
-// - FIX #4: Uses ResettableOnce instead of sync.Once for safe reconnection
-// - FIX #11: Explicit state machine with validated transitions
 package client
 
 import (
@@ -21,7 +18,6 @@ import (
 )
 
 // =============================================================================
-// FIX #11: Explicit State Machine Definition
 // =============================================================================
 
 // ClientState represents the connection state of a client.
@@ -107,10 +103,8 @@ type Client struct {
 	wire      *wire.Conn
 	sessionID string
 
-	// FIX #11: State management with explicit transitions
 	state atomic.Int32
 
-	// FIX #4: Resettable once for safe reconnection
 	closeOnce stalkerSync.ResettableOnce
 
 	// Pending requests
@@ -168,7 +162,6 @@ func New(cfg *Config) *Client {
 }
 
 // =============================================================================
-// FIX #11: State Transition Methods
 // =============================================================================
 
 // getState returns the current state.
@@ -224,7 +217,6 @@ func (c *Client) ConnectWithContext(ctx context.Context) error {
 		return fmt.Errorf("connection already in progress")
 	}
 
-	// FIX #11: Validated transition to connecting
 	if !c.transitionFrom(StateDisconnected, StateConnecting) {
 		return fmt.Errorf("cannot connect: current state is %s", c.getState())
 	}
@@ -317,7 +309,6 @@ func (c *Client) authenticate(ctx context.Context) error {
 
 // Close closes the client connection.
 //
-// FIX #4: Uses ResettableOnce.Do for thread-safe close.
 func (c *Client) Close() error {
 	var closeErr error
 
@@ -364,7 +355,6 @@ func (c *Client) Reconnect() error {
 
 // ReconnectWithContext attempts to reconnect with context.
 //
-// FIX #4: Uses ResettableOnce.Reset() for thread-safe reset.
 func (c *Client) ReconnectWithContext(ctx context.Context) error {
 	currentState := c.getState()
 	if currentState == StateClosed {
@@ -391,7 +381,6 @@ func (c *Client) ReconnectWithContext(ctx context.Context) error {
 
 	c.shutdown = make(chan struct{})
 
-	// FIX #4: Thread-safe reset of closeOnce
 	c.closeOnce.Reset()
 
 	return c.ConnectWithContext(ctx)

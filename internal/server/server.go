@@ -27,7 +27,6 @@ var log = logging.Component("server")
 
 // RateLimiter implements rate limiting for FAILED authentication attempts.
 //
-// FIX #13: This prevents brute-force attacks by limiting the number of
 // FAILED auth attempts per IP address per time window. Successful
 // authentications are NOT counted and reset the failure counter.
 //
@@ -193,7 +192,6 @@ type Server struct {
 	scheduler *scheduler.Scheduler
 	listener  net.Listener
 
-	// FIX #13: Rate limiter for authentication attempts
 	authRateLimiter *RateLimiter
 
 	shutdown chan struct{}
@@ -232,7 +230,6 @@ func New(cfg *Config) *Server {
 		sessions:  sessions,
 		scheduler: sched,
 		shutdown:  make(chan struct{}),
-		// FIX #13: Initialize rate limiter
 		authRateLimiter: NewRateLimiter(
 			config.DefaultAuthRateLimitPerMinute,
 			time.Minute,
@@ -337,7 +334,6 @@ func (s *Server) handleConn(conn net.Conn) {
 
 	log.Info("connection from", "remote", remote)
 
-	// FIX #13: Check if IP is blocked due to too many failed attempts
 	if s.authRateLimiter.IsBlocked(remoteIP) {
 		log.Warn("blocked due to too many failed auth attempts", "remote", remote)
 		conn.Close()
@@ -358,7 +354,6 @@ func (s *Server) handleConn(conn net.Conn) {
 
 	auth := env.GetAuth()
 	if auth == nil {
-		// FIX #13: Record failure for non-auth first message
 		s.authRateLimiter.RecordFailure(remoteIP)
 		w.Write(wire.NewError(env.Id, wire.ErrNotAuthenticated, "first message must be auth"))
 		conn.Close()
@@ -367,7 +362,6 @@ func (s *Server) handleConn(conn net.Conn) {
 
 	tokenCfg, ok := s.sessions.ValidateToken(auth.Token)
 	if !ok {
-		// FIX #13: Record failure for invalid token
 		s.authRateLimiter.RecordFailure(remoteIP)
 		s.sendAuthResponse(w, env.Id, false, "", "invalid token")
 		conn.Close()
@@ -376,7 +370,6 @@ func (s *Server) handleConn(conn net.Conn) {
 		return
 	}
 
-	// FIX #13: Reset failure count on successful auth
 	s.authRateLimiter.Reset(remoteIP)
 
 	conn.SetDeadline(time.Time{}) // Clear deadline
@@ -398,7 +391,6 @@ func (s *Server) handleConn(conn net.Conn) {
 		defer close(done)
 		for data := range session.SendChan() {
 			if _, err := conn.Write(data); err != nil {
-				// FIX #9: Close session when write fails.
 				// Close() is idempotent, so it's safe to call from both goroutines.
 				log.Debug("write failed, closing session",
 					"session_id", session.ID,

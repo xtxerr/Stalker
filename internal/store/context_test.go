@@ -1,6 +1,5 @@
 // Package store - Context Propagation Tests
 //
-// FIX #10: Tests für Context-Propagation in Store-Operationen.
 package store
 
 import (

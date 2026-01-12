@@ -1,6 +1,5 @@
 // Package testing provides test helpers for the stalker application.
 //
-// FIX #18: This package provides utilities for handling errors in test goroutines.
 // Using t.Fatal() or t.FailNow() in goroutines causes undefined behavior because
 // these methods call runtime.Goexit() which only terminates the current goroutine,
 // not the test goroutine.

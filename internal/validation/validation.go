@@ -1,8 +1,5 @@
 // Package validation provides centralized input validation for stalker.
 //
-// FIX #5: Proper bounds checking for poller reference parsing
-// FIX #9: Safe LIKE pattern construction
-// FIX #12: Consolidated validation logic
 package validation
 
 import (
@@ -139,7 +136,6 @@ func ValidateLinkName(linkName string) error {
 }
 
 // =============================================================================
-// FIX #5: Poller Reference Validation
 // =============================================================================
 
 // PollerRef represents a parsed poller reference.
@@ -150,8 +146,6 @@ type PollerRef struct {
 
 // ParsePollerRef parses a "target/poller" reference string.
 //
-// FIX #5: This function performs proper bounds checking to ensure
-// both target and poller components are non-empty.
 func ParsePollerRef(ref string) (*PollerRef, error) {
 	if ref == "" {
 		return nil, fmt.Errorf("empty poller reference")
@@ -166,7 +160,6 @@ func ParsePollerRef(ref string) (*PollerRef, error) {
 	target := strings.TrimSpace(parts[0])
 	poller := strings.TrimSpace(parts[1])
 
-	// FIX #5: Bounds check - both parts must be non-empty
 	if target == "" {
 		return nil, fmt.Errorf("invalid poller reference: empty target in '%s'", ref)
 	}
@@ -258,14 +251,12 @@ func (r *LinkRef) String() string {
 }
 
 // =============================================================================
-// FIX #9: SQL Safety
 // =============================================================================
 
 var sqlLikeMetaChars = regexp.MustCompile(`[%_\[\]\\]`)
 
 // EscapeLikePattern escapes special characters in a LIKE pattern.
 //
-// FIX #9: This prevents LIKE injection when user input is used in LIKE clauses.
 func EscapeLikePattern(pattern string) string {
 	return sqlLikeMetaChars.ReplaceAllStringFunc(pattern, func(s string) string {
 		return "\\" + s

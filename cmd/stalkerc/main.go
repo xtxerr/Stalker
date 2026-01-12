@@ -44,7 +44,6 @@ func main() {
 	log.SetFlags(log.Ltime | log.Lmicroseconds)
 
 	fmt.Printf("stalkerc v2 - Connecting to %s...\n", *serverAddr)
-	// TODO: Connect to server
 	sessionID = "demo-session"
 	fmt.Printf("Connected (session: %s)\n", sessionID)
 

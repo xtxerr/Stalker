@@ -193,7 +193,6 @@ func (s *Store) SecretExists(namespace, name string) (bool, error) {
 
 // escapeLikePattern escapes special characters for LIKE pattern matching.
 //
-// FIX #3: This function prevents SQL injection through LIKE wildcards.
 // Without this, a malicious secretRef like "%" would match all entries.
 func escapeLikePattern(pattern string) string {
 	// Escape the LIKE special characters: %, _, and \
@@ -205,13 +204,9 @@ func escapeLikePattern(pattern string) string {
 
 // countSecretUsage counts how many pollers reference a secret.
 //
-// FIX #3: The secretRef is now escaped before being used in LIKE patterns
-// to prevent SQL injection. Previously, a secretRef containing "%" would
-// match all entries in the database.
 func (s *Store) countSecretUsage(namespace, secretName string) (int, error) {
 	secretRef := "secret:" + secretName
 
-	// FIX #3: Escape special LIKE characters to prevent SQL injection
 	escapedRef := escapeLikePattern(secretRef)
 	likePattern := "%" + escapedRef + "%"
 

@@ -161,9 +161,6 @@ func (p *SNMPPoller) Poll(ctx context.Context, key PollerKey, cfg *SNMPConfig) P
 
 // validateConfig validates the SNMP configuration.
 //
-// FIX #12: This function now rejects SNMPv2c configurations without a community
-// string instead of using an insecure default like "public". Using default
-// communities is a security risk as it may allow unintended access to devices.
 func (p *SNMPPoller) validateConfig(cfg *SNMPConfig) error {
 	if cfg.Host == "" {
 		return fmt.Errorf("host is required")
@@ -172,8 +169,6 @@ func (p *SNMPPoller) validateConfig(cfg *SNMPConfig) error {
 		return fmt.Errorf("OID is required")
 	}
 
-	// FIX #12: Validate that SNMPv2c has a community string
-	// Previously, the code would default to "public" which is insecure.
 	isV3 := cfg.SecurityName != ""
 	if !isV3 && cfg.Community == "" {
 		return fmt.Errorf("SNMP v2c requires community string (refusing to use insecure default)")
