@@ -16,6 +16,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -43,13 +44,45 @@ func (k PollerKey) String() string {
 }
 
 // ParsePollerKey parses a string into a PollerKey.
+//
+// FIX #20: Changed from fmt.Sscanf to strings.SplitN.
+// The previous implementation used fmt.Sscanf with %s which reads until
+// whitespace, not until '/'. This caused parsing to fail for all valid keys.
+//
+// Example:
+//   Input: "ns1/target1/poller1"
+//   Old behavior: Sscanf reads entire string into first %s → n=1 → error
+//   New behavior: SplitN correctly splits → ["ns1", "target1", "poller1"]
 func ParsePollerKey(s string) (PollerKey, error) {
-	var key PollerKey
-	n, _ := fmt.Sscanf(s, "%s/%s/%s", &key.Namespace, &key.Target, &key.Poller)
-	if n != 3 {
-		return key, fmt.Errorf("invalid poller key format: %s", s)
+	if s == "" {
+		return PollerKey{}, fmt.Errorf("empty poller key")
 	}
-	return key, nil
+
+	parts := strings.SplitN(s, "/", 3)
+	if len(parts) != 3 {
+		return PollerKey{}, fmt.Errorf("invalid poller key format: %s (expected 'namespace/target/poller')", s)
+	}
+
+	// Validate that all parts are non-empty
+	if parts[0] == "" || parts[1] == "" || parts[2] == "" {
+		return PollerKey{}, fmt.Errorf("invalid poller key: empty component in %s", s)
+	}
+
+	return PollerKey{
+		Namespace: parts[0],
+		Target:    parts[1],
+		Poller:    parts[2],
+	}, nil
+}
+
+// MustParsePollerKey parses a key string, panics on error.
+// Use only for known-valid keys (e.g., in tests or with constants).
+func MustParsePollerKey(s string) PollerKey {
+	k, err := ParsePollerKey(s)
+	if err != nil {
+		panic(err)
+	}
+	return k
 }
 
 // PollJob represents a poll job to be executed.
@@ -129,6 +162,10 @@ func (h PollHeap) Peek() *PollItem {
 // =============================================================================
 // Scheduler Configuration
 // =============================================================================
+
+// BackpressureDelayMs is the delay applied when the job queue is full.
+// Extracted as constant to avoid magic numbers in code.
+const BackpressureDelayMs = 1000
 
 // Config holds scheduler configuration.
 type Config struct {
@@ -322,6 +359,16 @@ func (s *Scheduler) Add(key PollerKey, intervalMs uint32) {
 }
 
 // Remove removes a poller from the scheduler.
+//
+// FIX #21: Fixed memory leak when removing pollers that are currently polling.
+// The previous implementation deleted from heapIdx immediately, but if the
+// poller was currently polling (Polling=true), the item stayed in the heap
+// with deleted=true and was never cleaned up because MarkComplete couldn't
+// find it in heapIdx.
+//
+// New behavior:
+//   - If not polling: remove from both heap and heapIdx immediately
+//   - If polling: mark as deleted, keep in heapIdx so MarkComplete can clean up
 func (s *Scheduler) Remove(key PollerKey) {
 	keyStr := key.String()
 
@@ -336,14 +383,16 @@ func (s *Scheduler) Remove(key PollerKey) {
 	// Mark as deleted (in case currently polling)
 	item.deleted = true
 
-	// Remove from heap if not currently polling
-	if !item.Polling && item.index >= 0 {
-		heap.Remove(&s.heap, item.index)
+	if !item.Polling {
+		// Not currently polling - safe to remove immediately
+		if item.index >= 0 {
+			heap.Remove(&s.heap, item.index)
+		}
+		delete(s.heapIdx, keyStr)
 	}
+	// If Polling=true, leave in heapIdx so MarkComplete can find and clean it up
 
-	delete(s.heapIdx, keyStr)
-
-	log.Debug("poller removed", "key", keyStr)
+	log.Debug("poller removed", "key", keyStr, "was_polling", item.Polling)
 }
 
 // UpdateInterval updates the polling interval for a poller.
@@ -370,8 +419,9 @@ func (s *Scheduler) Contains(key PollerKey) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	_, ok := s.heapIdx[keyStr]
-	return ok
+	item, ok := s.heapIdx[keyStr]
+	// Also check deleted flag - a deleted item shouldn't count as "contained"
+	return ok && !item.deleted
 }
 
 // =============================================================================
@@ -410,14 +460,18 @@ func (s *Scheduler) processDueItems() {
 			break
 		}
 
-		// Skip deleted items
-		if next.deleted {
-			heap.Pop(&s.heap)
+		// Pop the item first
+		item := heap.Pop(&s.heap).(*PollItem)
+
+		// Skip and clean up deleted items
+		if item.deleted {
+			// FIX #21: Also clean up from heapIdx if present
+			keyStr := item.Key.String()
+			delete(s.heapIdx, keyStr)
 			continue
 		}
 
-		// Pop and mark as polling
-		item := heap.Pop(&s.heap).(*PollItem)
+		// Mark as polling
 		item.Polling = true
 
 		// Try to queue job
@@ -426,7 +480,7 @@ func (s *Scheduler) processDueItems() {
 			s.pollsQueued.Add(1)
 		default:
 			// Queue full - reschedule with backpressure delay
-			item.NextPollMs = now + 1000 // Retry in 1 second
+			item.NextPollMs = now + BackpressureDelayMs
 			item.Polling = false
 			heap.Push(&s.heap, item)
 			s.backpressure.Add(1)
@@ -447,9 +501,10 @@ func (s *Scheduler) MarkComplete(key PollerKey) {
 		return // Already removed
 	}
 
-	// Check if deleted while polling
+	// FIX #21: Check if deleted while polling and clean up
 	if item.deleted {
 		delete(s.heapIdx, keyStr)
+		// Item is already out of heap (was popped in processDueItems)
 		return
 	}
 
@@ -607,4 +662,18 @@ func (s *Scheduler) GetNextPollTime(key PollerKey) (time.Time, bool) {
 // ActiveWorkerCount returns the number of currently active workers.
 func (s *Scheduler) ActiveWorkerCount() int {
 	return int(s.activeWorkers.Load())
+}
+
+// Count returns the number of scheduled pollers.
+func (s *Scheduler) Count() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	count := 0
+	for _, item := range s.heapIdx {
+		if !item.deleted {
+			count++
+		}
+	}
+	return count
 }

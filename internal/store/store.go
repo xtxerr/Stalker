@@ -104,48 +104,6 @@ func (s *Store) DB() *sql.DB {
 }
 
 // =============================================================================
-// Transaction Support
-// =============================================================================
-
-// Transaction executes a function within a database transaction.
-//
-// If the function returns an error, the transaction is rolled back.
-// If the function returns nil, the transaction is committed.
-func (s *Store) Transaction(fn func(*sql.Tx) error) error {
-	return s.TransactionContext(context.Background(), fn)
-}
-
-// TransactionContext executes a function within a database transaction with context.
-//
-// FIX #5/#11: This method supports context cancellation and timeouts.
-func (s *Store) TransactionContext(ctx context.Context, fn func(*sql.Tx) error) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin transaction: %w", err)
-	}
-
-	defer func() {
-		if p := recover(); p != nil {
-			tx.Rollback()
-			panic(p)
-		}
-	}()
-
-	if err := fn(tx); err != nil {
-		if rbErr := tx.Rollback(); rbErr != nil {
-			return fmt.Errorf("rollback failed: %v (original error: %w)", rbErr, err)
-		}
-		return err
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit transaction: %w", err)
-	}
-
-	return nil
-}
-
-// =============================================================================
 // Query Helpers
 // =============================================================================
 

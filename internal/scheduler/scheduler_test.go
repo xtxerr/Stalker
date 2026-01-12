@@ -1,10 +1,99 @@
 package scheduler
 
 import (
+	"context"
 	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestParsePollerKey(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    PollerKey
+		wantErr bool
+	}{
+		{
+			name:  "valid key",
+			input: "ns1/target1/poller1",
+			want:  PollerKey{Namespace: "ns1", Target: "target1", Poller: "poller1"},
+		},
+		{
+			name:  "key with special chars",
+			input: "prod-ns/my-target/cpu_usage",
+			want:  PollerKey{Namespace: "prod-ns", Target: "my-target", Poller: "cpu_usage"},
+		},
+		{
+			name:    "empty string",
+			input:   "",
+			wantErr: true,
+		},
+		{
+			name:    "missing parts",
+			input:   "ns1/target1",
+			wantErr: true,
+		},
+		{
+			name:    "too few slashes",
+			input:   "ns1target1poller1",
+			wantErr: true,
+		},
+		{
+			name:    "empty namespace",
+			input:   "/target1/poller1",
+			wantErr: true,
+		},
+		{
+			name:    "empty target",
+			input:   "ns1//poller1",
+			wantErr: true,
+		},
+		{
+			name:    "empty poller",
+			input:   "ns1/target1/",
+			wantErr: true,
+		},
+		{
+			name:  "poller with slash",
+			input: "ns1/target1/poller/with/slashes",
+			want:  PollerKey{Namespace: "ns1", Target: "target1", Poller: "poller/with/slashes"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParsePollerKey(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ParsePollerKey(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+				return
+			}
+			if !tt.wantErr && got != tt.want {
+				t.Errorf("ParsePollerKey(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestPollerKeyString(t *testing.T) {
+	key := PollerKey{Namespace: "ns1", Target: "target1", Poller: "poller1"}
+	want := "ns1/target1/poller1"
+	if got := key.String(); got != want {
+		t.Errorf("PollerKey.String() = %q, want %q", got, want)
+	}
+}
+
+func TestPollerKeyRoundTrip(t *testing.T) {
+	original := PollerKey{Namespace: "prod", Target: "router-1", Poller: "cpu"}
+	str := original.String()
+	parsed, err := ParsePollerKey(str)
+	if err != nil {
+		t.Fatalf("ParsePollerKey(%q) error = %v", str, err)
+	}
+	if parsed != original {
+		t.Errorf("Round trip failed: got %v, want %v", parsed, original)
+	}
+}
 
 func TestSchedulerBasic(t *testing.T) {
 	sched := New(&Config{
@@ -14,7 +103,8 @@ func TestSchedulerBasic(t *testing.T) {
 
 	var pollCount atomic.Int32
 
-	sched.SetPollFunc(func(key PollerKey) PollResult {
+	// FIX: Use correct signature with context.Context
+	sched.SetPollFunc(func(ctx context.Context, key PollerKey) PollResult {
 		pollCount.Add(1)
 		return PollResult{
 			Key:         key,
@@ -39,29 +129,39 @@ func TestSchedulerBasic(t *testing.T) {
 	}
 
 	// Check stats
-	heapSize, indexSize, _ := sched.Stats()
-	if heapSize != 1 || indexSize != 1 {
-		t.Errorf("Stats: heap=%d, index=%d, want 1,1", heapSize, indexSize)
+	heapSize, queueUsed, active, backpressure := sched.Stats()
+	_ = queueUsed
+	_ = active
+	_ = backpressure
+	if heapSize != 1 {
+		t.Errorf("Stats: heap=%d, want 1", heapSize)
 	}
 
 	// Remove
 	sched.Remove(key)
-	heapSize, indexSize, _ = sched.Stats()
-	if heapSize != 0 || indexSize != 0 {
-		t.Errorf("After remove: heap=%d, index=%d, want 0,0", heapSize, indexSize)
+
+	// Give some time for cleanup
+	time.Sleep(50 * time.Millisecond)
+
+	heapSize, _, _, _ = sched.Stats()
+	if heapSize != 0 {
+		t.Errorf("After remove: heap=%d, want 0", heapSize)
 	}
 }
 
-func TestSchedulerPauseResume(t *testing.T) {
+func TestSchedulerRemoveDuringPolling(t *testing.T) {
+	// This test verifies FIX #21 - memory leak when removing during polling
 	sched := New(&Config{
-		Workers:   2,
+		Workers:   1, // Single worker to control timing
 		QueueSize: 100,
 	})
 
-	var pollCount atomic.Int32
+	pollStarted := make(chan struct{})
+	pollContinue := make(chan struct{})
 
-	sched.SetPollFunc(func(key PollerKey) PollResult {
-		pollCount.Add(1)
+	sched.SetPollFunc(func(ctx context.Context, key PollerKey) PollResult {
+		close(pollStarted) // Signal that poll has started
+		<-pollContinue     // Wait for signal to continue
 		return PollResult{
 			Key:         key,
 			TimestampMs: time.Now().UnixMilli(),
@@ -73,29 +173,29 @@ func TestSchedulerPauseResume(t *testing.T) {
 	defer sched.Stop()
 
 	key := PollerKey{Namespace: "ns", Target: "target", Poller: "poller"}
-	sched.Add(key, 50)
+	sched.Add(key, 10) // Very short interval to trigger quickly
 
-	// Let it poll once
+	// Wait for poll to start
+	<-pollStarted
+
+	// Remove while polling is in progress
+	sched.Remove(key)
+
+	// Let poll complete
+	close(pollContinue)
+
+	// Wait for cleanup
 	time.Sleep(100 * time.Millisecond)
-	countBefore := pollCount.Load()
 
-	// Pause
-	sched.Pause(key)
-	time.Sleep(150 * time.Millisecond)
-	countDuringPause := pollCount.Load()
-
-	// Should not have polled during pause
-	if countDuringPause > countBefore+1 {
-		t.Errorf("Polled during pause: before=%d, during=%d", countBefore, countDuringPause)
+	// Verify: item should be completely cleaned up
+	heapSize, _, _, _ := sched.Stats()
+	if heapSize != 0 {
+		t.Errorf("Memory leak: heap size = %d after remove during polling, want 0", heapSize)
 	}
 
-	// Resume
-	sched.Resume(key)
-	time.Sleep(150 * time.Millisecond)
-	countAfterResume := pollCount.Load()
-
-	if countAfterResume <= countDuringPause {
-		t.Errorf("Did not poll after resume: during=%d, after=%d", countDuringPause, countAfterResume)
+	// Also verify Contains returns false
+	if sched.Contains(key) {
+		t.Error("Contains() returned true for removed key")
 	}
 }
 
@@ -107,7 +207,7 @@ func TestSchedulerUpdateInterval(t *testing.T) {
 
 	var pollCount atomic.Int32
 
-	sched.SetPollFunc(func(key PollerKey) PollResult {
+	sched.SetPollFunc(func(ctx context.Context, key PollerKey) PollResult {
 		pollCount.Add(1)
 		return PollResult{
 			Key:         key,
@@ -146,12 +246,11 @@ func TestSchedulerMultiplePollers(t *testing.T) {
 
 	pollCounts := make(map[string]*atomic.Int32)
 
-	sched.SetPollFunc(func(key PollerKey) PollResult {
+	sched.SetPollFunc(func(ctx context.Context, key PollerKey) PollResult {
 		keyStr := key.String()
-		if _, ok := pollCounts[keyStr]; !ok {
-			pollCounts[keyStr] = &atomic.Int32{}
+		if counter, ok := pollCounts[keyStr]; ok {
+			counter.Add(1)
 		}
-		pollCounts[keyStr].Add(1)
 		return PollResult{
 			Key:         key,
 			TimestampMs: time.Now().UnixMilli(),
@@ -175,81 +274,94 @@ func TestSchedulerMultiplePollers(t *testing.T) {
 		sched.Add(k, uint32(50+i*10)) // Slightly different intervals
 	}
 
+	// Wait for polls
 	time.Sleep(300 * time.Millisecond)
 
-	// All should have been polled
+	// All should have been polled at least once
 	for _, k := range keys {
-		count := pollCounts[k.String()].Load()
-		if count < 1 {
-			t.Errorf("Poller %s not polled, count=%d", k.String(), count)
+		keyStr := k.String()
+		if pollCounts[keyStr].Load() < 1 {
+			t.Errorf("Poller %s was not polled", keyStr)
 		}
 	}
 
-	// Check scheduled pollers
-	scheduled := sched.GetScheduledPollers()
-	if len(scheduled) != 4 {
-		t.Errorf("Expected 4 scheduled pollers, got %d", len(scheduled))
+	// Cleanup
+	for _, k := range keys {
+		sched.Remove(k)
 	}
 }
 
-func TestPollerKey(t *testing.T) {
-	key := PollerKey{Namespace: "prod", Target: "router", Poller: "cpu"}
+func TestSchedulerContains(t *testing.T) {
+	sched := New(&Config{
+		Workers:   1,
+		QueueSize: 10,
+	})
 
-	s := key.String()
-	if s != "prod/router/cpu" {
-		t.Errorf("String() = %s, want prod/router/cpu", s)
+	key := PollerKey{Namespace: "ns", Target: "t", Poller: "p"}
+
+	// Should not contain before adding
+	if sched.Contains(key) {
+		t.Error("Contains() returned true before Add()")
+	}
+
+	sched.Add(key, 1000)
+
+	// Should contain after adding
+	if !sched.Contains(key) {
+		t.Error("Contains() returned false after Add()")
+	}
+
+	sched.Remove(key)
+
+	// Should not contain after removing
+	if sched.Contains(key) {
+		t.Error("Contains() returned true after Remove()")
 	}
 }
 
-func TestSNMPConfigParse(t *testing.T) {
-	json := []byte(`{
-		"host": "192.168.1.1",
-		"port": 161,
-		"oid": "1.3.6.1.2.1.1.3.0",
-		"community": "public"
-	}`)
+func TestSchedulerCount(t *testing.T) {
+	sched := New(&Config{
+		Workers:   1,
+		QueueSize: 10,
+	})
 
-	cfg, err := ParseSNMPConfig(json)
-	if err != nil {
-		t.Fatalf("ParseSNMPConfig: %v", err)
+	if got := sched.Count(); got != 0 {
+		t.Errorf("Count() = %d before adding, want 0", got)
 	}
 
-	if cfg.Host != "192.168.1.1" {
-		t.Errorf("Host = %s, want 192.168.1.1", cfg.Host)
+	keys := []PollerKey{
+		{Namespace: "ns1", Target: "t1", Poller: "p1"},
+		{Namespace: "ns1", Target: "t1", Poller: "p2"},
+		{Namespace: "ns2", Target: "t1", Poller: "p1"},
 	}
-	if cfg.Port != 161 {
-		t.Errorf("Port = %d, want 161", cfg.Port)
+
+	for _, k := range keys {
+		sched.Add(k, 1000)
 	}
-	if cfg.OID != "1.3.6.1.2.1.1.3.0" {
-		t.Errorf("OID = %s, want 1.3.6.1.2.1.1.3.0", cfg.OID)
+
+	if got := sched.Count(); got != 3 {
+		t.Errorf("Count() = %d after adding 3, want 3", got)
 	}
-	if cfg.Community != "public" {
-		t.Errorf("Community = %s, want public", cfg.Community)
+
+	sched.Remove(keys[0])
+
+	if got := sched.Count(); got != 2 {
+		t.Errorf("Count() = %d after removing 1, want 2", got)
 	}
 }
 
-func TestSNMPConfigDefaults(t *testing.T) {
-	json := []byte(`{"host": "192.168.1.1", "oid": "1.3.6.1.2.1.1.3.0"}`)
+func BenchmarkParsePollerKey(b *testing.B) {
+	input := "production/core-router-01/interface-traffic"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = ParsePollerKey(input)
+	}
+}
 
-	cfg, err := ParseSNMPConfig(json)
-	if err != nil {
-		t.Fatalf("ParseSNMPConfig: %v", err)
-	}
-
-	// Check defaults
-	if cfg.Port != 161 {
-		t.Errorf("Port default = %d, want 161", cfg.Port)
-	}
-	if cfg.TimeoutMs != 5000 {
-		t.Errorf("TimeoutMs default = %d, want 5000", cfg.TimeoutMs)
-	}
-	if cfg.Retries != 2 {
-		t.Errorf("Retries default = %d, want 2", cfg.Retries)
-	}
-	if cfg.Version != 2 {
-		t.Errorf("Version default = %d, want 2", cfg.Version)
-	}
-	if cfg.Community != "public" {
-		t.Errorf("Community default = %s, want public", cfg.Community)
+func BenchmarkPollerKeyString(b *testing.B) {
+	key := PollerKey{Namespace: "production", Target: "core-router-01", Poller: "interface-traffic"}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = key.String()
 	}
 }

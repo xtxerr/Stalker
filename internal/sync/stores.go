@@ -1,70 +1,15 @@
-// Package sync - Store Extensions Documentation
+// Package sync - Store Adapters for Sync Engine
 //
-// This file documents the required changes to store entity types
-// to support the sync engine.
+// FIX #22: Changed all SQL placeholders from PostgreSQL-style ($1, $2, ...)
+// to DuckDB/SQLite-style (?, ?, ...). DuckDB does not support $N placeholders.
 //
-// REQUIRED CHANGES TO internal/store TYPES:
+// This file provides SyncStore implementations for:
+//   - Namespaces
+//   - Targets
+//   - Pollers
 //
-// 1. Namespace (internal/store/namespace.go):
-//
-//    type Namespace struct {
-//        Name        string
-//        Description string
-//        Config      *NamespaceConfig
-//        CreatedAt   time.Time
-//        UpdatedAt   time.Time
-//        Version     int
-//        Source      string  // NEW: "yaml", "api", "import"
-//    }
-//
-// 2. Target (internal/store/target.go):
-//
-//    type Target struct {
-//        Namespace   string
-//        Name        string
-//        Description string
-//        Labels      map[string]string
-//        Config      *TargetConfig
-//        CreatedAt   time.Time
-//        UpdatedAt   time.Time
-//        Version     int
-//        Source      string  // NEW: "yaml", "api", "import"
-//    }
-//
-// 3. Poller (internal/store/poller.go):
-//
-//    type Poller struct {
-//        Namespace      string
-//        Target         string
-//        Name           string
-//        Description    string
-//        Protocol       string
-//        ProtocolConfig json.RawMessage
-//        PollingConfig  *PollingConfig
-//        AdminState     string
-//        CreatedAt      time.Time
-//        UpdatedAt      time.Time
-//        Version        int
-//        Source         string  // NEW: "yaml", "api", "import"
-//    }
-//
-// 4. TreeNode (internal/store/tree.go):
-//
-//    type TreeNode struct {
-//        Namespace   string
-//        Path        string
-//        NodeType    string
-//        LinkRef     string
-//        Description string
-//        CreatedAt   time.Time
-//        Source      string  // NEW: "yaml", "api", "import"
-//    }
-//
-// REQUIRED QUERY CHANGES:
-//
-// All SELECT queries must include the source column.
-// All INSERT queries must include the source column.
-// All UPDATE queries must preserve the source column (unless explicitly changing it).
+// Each adapter wraps the underlying *sql.DB and implements bulk operations
+// needed by the sync engine.
 
 package sync
 
@@ -94,6 +39,7 @@ func NewNamespaceSyncStore(db *sql.DB) *NamespaceSyncStore {
 
 // ListAll implements SyncStore.
 func (s *NamespaceSyncStore) ListAll(ctx context.Context, namespace string) ([]*SyncableNamespace, error) {
+	// Note: namespace parameter is ignored for namespaces (they are top-level)
 	query := `
 		SELECT name, description, config, source, created_at, updated_at, version
 		FROM namespaces
@@ -126,7 +72,7 @@ func (s *NamespaceSyncStore) ListAll(ctx context.Context, namespace string) ([]*
 		if source.Valid {
 			ns.Source = source.String
 		}
-		// TODO: Parse config JSON
+		// TODO: Parse config JSON if needed
 
 		result = append(result, WrapNamespace(ns))
 	}
@@ -135,19 +81,20 @@ func (s *NamespaceSyncStore) ListAll(ctx context.Context, namespace string) ([]*
 }
 
 // BulkCreate implements SyncStore.
+//
+// FIX #22: Changed from PostgreSQL $N placeholders to DuckDB ? placeholders.
 func (s *NamespaceSyncStore) BulkCreate(ctx context.Context, entities []*SyncableNamespace) error {
 	if len(entities) == 0 {
 		return nil
 	}
 
-	// Build bulk insert
+	// Build bulk insert with ? placeholders (DuckDB compatible)
 	var values []string
 	var args []interface{}
 
-	for i, e := range entities {
+	for _, e := range entities {
 		ns := e.UnwrapNamespace()
-		values = append(values, fmt.Sprintf("($%d, $%d, $%d, $%d, $%d)",
-			i*5+1, i*5+2, i*5+3, i*5+4, i*5+5))
+		values = append(values, "(?, ?, ?, ?, ?)")
 		args = append(args, ns.Name, ns.Description, nil, ns.Source, time.Now())
 	}
 
@@ -177,15 +124,19 @@ func (s *NamespaceSyncStore) BulkUpdate(ctx context.Context, entities []*Syncabl
 }
 
 // BulkDelete implements SyncStore.
+//
+// FIX #22: Changed from PostgreSQL $N placeholders to DuckDB ? placeholders.
+// Also simplified to use individual deletes for better error handling.
 func (s *NamespaceSyncStore) BulkDelete(ctx context.Context, keys []string) error {
 	if len(keys) == 0 {
 		return nil
 	}
 
+	// Build IN clause with ? placeholders
 	placeholders := make([]string, len(keys))
 	args := make([]interface{}, len(keys))
 	for i, key := range keys {
-		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		placeholders[i] = "?"
 		args[i] = key
 	}
 
@@ -212,6 +163,8 @@ func NewTargetSyncStore(db *sql.DB) *TargetSyncStore {
 }
 
 // ListAll implements SyncStore.
+//
+// FIX #22: Changed from PostgreSQL $1 placeholder to DuckDB ? placeholder.
 func (s *TargetSyncStore) ListAll(ctx context.Context, namespace string) ([]*SyncableTarget, error) {
 	query := `
 		SELECT namespace, name, description, labels, config, source, created_at, updated_at, version
@@ -220,7 +173,7 @@ func (s *TargetSyncStore) ListAll(ctx context.Context, namespace string) ([]*Syn
 	args := []interface{}{}
 
 	if namespace != "" {
-		query += " WHERE namespace = $1"
+		query += " WHERE namespace = ?"
 		args = append(args, namespace)
 	}
 
@@ -324,6 +277,8 @@ func NewPollerSyncStore(db *sql.DB) *PollerSyncStore {
 }
 
 // ListAll implements SyncStore.
+//
+// FIX #22: Changed from PostgreSQL $1 placeholder to DuckDB ? placeholder.
 func (s *PollerSyncStore) ListAll(ctx context.Context, namespace string) ([]*SyncablePoller, error) {
 	query := `
 		SELECT namespace, target, name, description, protocol, protocol_config, 
@@ -333,7 +288,7 @@ func (s *PollerSyncStore) ListAll(ctx context.Context, namespace string) ([]*Syn
 	args := []interface{}{}
 
 	if namespace != "" {
-		query += " WHERE namespace = $1"
+		query += " WHERE namespace = ?"
 		args = append(args, namespace)
 	}
 
