@@ -1,8 +1,6 @@
 # Stalker - Monitoring Platform
 
-> Formerly known as stalker
-
-# stalker Technical Documentation
+# Technical Documentation
 
 ## Table of Contents
 
