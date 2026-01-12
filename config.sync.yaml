@@ -1,0 +1,244 @@
+# =============================================================================
+# SYNC ENGINE CONFIGURATION
+# =============================================================================
+#
+# The sync engine reconciles YAML configuration with the database on startup.
+# It determines what happens when YAML and DB state differ.
+#
+# KEY CONCEPTS:
+#
+# 1. SOURCE TRACKING
+#    Every entity has a "source" field: 'yaml', 'api', or 'import'.
+#    This tracks where the entity was created from.
+#
+# 2. POLICIES
+#    Policies determine how conflicts are resolved:
+#
+#    create-only:   Create new entities, never modify existing ones.
+#                   Safe default - API changes are always preserved.
+#
+#    full-sync:     YAML is the single source of truth.
+#                   Creates, updates, AND DELETES to match YAML exactly.
+#                   WARNING: Entities not in YAML will be deleted!
+#
+#    source-aware:  Only modify entities with source='yaml'.
+#                   Entities created via API are never touched.
+#                   Best balance between declarative config and API flexibility.
+#
+#    ignore:        Skip this section entirely. DB is authoritative.
+#
+# 3. HIERARCHICAL PATHS
+#    Policies are matched hierarchically:
+#    "tree.views" → checks "tree.views", then "tree", then default.
+#
+# RECONCILIATION ORDER:
+#
+#    Order   Section       Description
+#    ─────   ───────       ───────────
+#      10    namespaces    Namespace entities
+#      20    targets       Target entities
+#      30    pollers       Poller entities
+#      40    secrets       Secret entities
+#      50    tree.static   Manual tree links
+#      51    tree.views    Label-based views
+#      52    tree.smart    Query-based smart folders
+#
+# BEST PRACTICES:
+#
+# - Use 'create-only' for entities you might modify via API
+# - Use 'full-sync' for declarative sections (views, smart folders)
+# - Use 'source-aware' for hybrid workflows
+# - Never use 'full-sync' on entities with important API changes
+
+sync:
+  # Default policy for sections without explicit override
+  # Recommended: 'create-only' (safe) or 'source-aware' (flexible)
+  default: create-only
+  
+  # Section-specific policy overrides
+  policies:
+    # Server defaults are always declarative
+    # (snmp.*, storage.*, etc. from YAML)
+    defaults: full-sync
+    
+    # Entities: Use create-only to preserve API changes
+    # namespaces: create-only  # (inherits from default)
+    # targets: create-only     # (inherits from default)
+    # pollers: create-only     # (inherits from default)
+    
+    # Secrets: Never overwrite API-created secrets
+    secrets: create-only
+    
+    # Tree static links: Could be either
+    # tree.static: create-only  # (inherits from default)
+    
+    # Views and Smart Folders are declarative
+    # These should match YAML exactly
+    tree.views: full-sync
+    tree.smart: full-sync
+
+
+# =============================================================================
+# TREE CONFIGURATION (Virtual Filesystem)
+# =============================================================================
+#
+# The tree provides a virtual filesystem to organize targets and pollers
+# independent of their physical namespace/target/poller hierarchy.
+#
+# THREE MECHANISMS (in priority order):
+#
+# 1. STATIC (priority 100)
+#    Manual links you define explicitly.
+#    Highest priority - always wins.
+#
+# 2. VIEWS (priority 50)
+#    Auto-generated paths based on target/poller labels.
+#    Updates automatically when labels change.
+#
+# 3. SMART (priority 25)
+#    Query-based dynamic folders.
+#    Contents computed on-demand (with caching).
+
+tree:
+  # ---------------------------------------------------------------------------
+  # STATIC - Manual Links
+  # ---------------------------------------------------------------------------
+  # Explicit paths for custom organization.
+  # Use when you need paths that don't follow labels.
+  #
+  # Syntax:
+  #   /path: target-name              → Link to target
+  #   /path: target-name/poller-name  → Link to poller
+  #   /path:
+  #     links: [target-1, target-2]   → Multiple links
+  #     description: "..."            → Optional description
+  
+  static:
+    # Simple target link
+    /favorites/main-router: core-router
+    
+    # Simple poller link
+    /favorites/cpu: core-router/cpu
+    
+    # Multiple targets in one directory
+    /critical/network:
+      description: Critical network infrastructure
+      links:
+        - core-router
+        - backup-router
+        - edge-firewall
+
+  # ---------------------------------------------------------------------------
+  # VIEWS - Label-Based Auto-Hierarchy
+  # ---------------------------------------------------------------------------
+  # Define patterns that auto-create paths based on entity labels.
+  #
+  # Template Variables:
+  #   {name}           Entity name (target or poller)
+  #   {target}         Parent target name (for poller views)
+  #   {label:KEY}      Label value (path segment skipped if missing)
+  #   {target:KEY}     Parent target's label (for poller views)
+  #
+  # Filter Syntax:
+  #   label:KEY            Label exists (any value)
+  #   label:KEY = VALUE    Label equals value
+  #   label:KEY in [a,b]   Label is one of values
+  #   AND, OR, NOT         Logical operators
+  #
+  # Example:
+  #   Target with labels {site: dc1, rack: A1} and view path
+  #   "/by-site/{label:site}/{label:rack}/{name}" creates:
+  #   → /by-site/dc1/A1/core-router
+  
+  views:
+    # Group by datacenter site
+    by-site:
+      path: /by-site/{label:site}/{name}
+      match: targets
+      when: label:site
+      description: Targets grouped by site
+    
+    # Two-level: site → rack
+    by-site-rack:
+      path: /by-site/{label:site}/rack-{label:rack}/{name}
+      match: targets
+      when: label:site AND label:rack
+    
+    # By vendor and model
+    by-vendor:
+      path: /vendors/{label:vendor}/{label:model}/{name}
+      match: targets
+      when: label:vendor
+    
+    # By role (core, access, distribution, etc.)
+    by-role:
+      path: /roles/{label:role}/{name}
+      match: targets
+      when: label:role
+    
+    # Pollers grouped under their target's site
+    pollers-by-site:
+      path: /by-site/{target:site}/{target}/{name}
+      match: pollers
+      when: target:site
+
+  # ---------------------------------------------------------------------------
+  # SMART - Query-Based Dynamic Folders
+  # ---------------------------------------------------------------------------
+  # Contents computed dynamically from queries.
+  # Results are cached for performance.
+  #
+  # Query Syntax:
+  #   label:KEY = VALUE     Label comparison
+  #   label:KEY in [a,b,c]  Label is one of values
+  #   state = VALUE         Poller state (up, down, degraded, unknown)
+  #   admin = VALUE         Admin state (enabled, disabled)
+  #   created > DURATION    Age comparison (24h, 7d, 1w)
+  #
+  # Cache:
+  #   How long to cache results (default: 60s)
+  #   Lower = fresher data, more CPU
+  #   Higher = stale data, less CPU
+  
+  smart:
+    # All critical priority devices
+    /alerts/critical:
+      description: Critical infrastructure
+      targets: label:priority = critical
+      cache: 60s
+    
+    # All unhealthy pollers
+    /alerts/down:
+      description: Currently unreachable
+      pollers: state = down
+      cache: 30s
+    
+    # Degraded (partial failures)
+    /alerts/degraded:
+      description: Experiencing issues
+      pollers: state = degraded
+      cache: 30s
+    
+    # All network devices
+    /devices/network:
+      description: Routers, switches, firewalls
+      targets: label:type in [router, switch, firewall]
+      cache: 2m
+    
+    # All servers
+    /devices/servers:
+      description: Server infrastructure
+      targets: label:type = server
+      cache: 2m
+    
+    # Recently added (last 24 hours)
+    /recent:
+      description: Added in last 24 hours
+      targets: created > 24h
+      cache: 5m
+    
+    # Disabled pollers (for review)
+    /review/disabled:
+      description: Manually disabled pollers
+      pollers: admin = disabled
+      cache: 2m

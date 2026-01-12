@@ -1,0 +1,793 @@
+# =============================================================================
+# STALKER CONFIGURATION FILE
+# =============================================================================
+#
+# This file contains ALL available configuration options for stalkerd.
+# Copy this file to config.yaml and customize for your environment.
+#
+# Environment variables can be used anywhere with ${VAR_NAME} syntax.
+# Example: token: "${STALKER_TOKEN}"
+#
+# Configuration Priority (highest to lowest):
+#   1. CLI Flags
+#   2. Environment Variables (${VAR} in YAML)
+#   3. Config File (this file)
+#   4. Built-in Defaults
+#
+# =============================================================================
+
+
+# =============================================================================
+# SERVER NETWORK CONFIGURATION
+# =============================================================================
+
+# Server listen address and port.
+# Format: "host:port" or ":port" for all interfaces.
+#
+# Examples:
+#   "0.0.0.0:9161"    - All interfaces, port 9161
+#   ":9161"           - Same as above (shorthand)
+#   "127.0.0.1:9161"  - Localhost only
+#   "[::]:9161"       - All interfaces, IPv6
+#
+# Default: "0.0.0.0:9161"
+listen: "0.0.0.0:9161"
+
+
+# =============================================================================
+# TLS CONFIGURATION
+# =============================================================================
+#
+# TLS is optional but STRONGLY RECOMMENDED for production.
+# Without TLS, authentication tokens are transmitted in plaintext.
+#
+# Generate self-signed certificates:
+#   openssl req -x509 -newkey rsa:4096 \
+#     -keyout certs/server.key -out certs/server.crt \
+#     -days 365 -nodes -subj "/CN=stalker"
+
+tls:
+  # Path to PEM-encoded TLS certificate file.
+  # Leave empty to disable TLS (not recommended for production).
+  #
+  # Default: "" (TLS disabled)
+  cert_file: ""
+  
+  # Path to PEM-encoded TLS private key file.
+  # Must match the certificate.
+  #
+  # Default: "" (TLS disabled)
+  key_file: ""
+  
+  # Example with TLS enabled:
+  # cert_file: "certs/server.crt"
+  # key_file: "certs/server.key"
+
+
+# =============================================================================
+# AUTHENTICATION CONFIGURATION
+# =============================================================================
+#
+# All clients must authenticate with a valid token.
+# Tokens can be restricted to specific namespaces for access control.
+
+auth:
+  # Rate limiting for FAILED authentication attempts (per IP address).
+  # Protects against brute-force attacks.
+  #
+  # After this many FAILED attempts within 1 minute, the IP is temporarily
+  # blocked from connecting. Successful authentications reset the counter.
+  #
+  # Default: 5 failed attempts per minute
+  rate_limit_per_minute: 5
+  
+  # List of authentication tokens.
+  # At least one token is required.
+  tokens:
+    # Admin token with full access to all namespaces.
+    # Using environment variable for security.
+    - id: "admin"
+      # Unique identifier for logging and auditing.
+      # Does not need to be secret.
+      
+      token: "${STALKER_ADMIN_TOKEN}"
+      # The actual secret token value.
+      # NEVER commit real tokens to version control!
+      # Use environment variables or secrets management.
+      
+      # namespaces: []
+      # Empty or omitted = access to ALL namespaces (admin).
+      # This is the default for admin tokens.
+    
+    # Example: Restricted token for production namespace only.
+    # - id: "prod-monitor"
+    #   token: "${STALKER_PROD_TOKEN}"
+    #   namespaces:
+    #     - "production"
+    #   # This token can ONLY access the "production" namespace.
+    #   # Attempts to access other namespaces will fail with ErrNotAuthorized.
+    
+    # Example: Token with access to multiple namespaces.
+    # - id: "dev-team"
+    #   token: "${STALKER_DEV_TOKEN}"
+    #   namespaces:
+    #     - "development"
+    #     - "staging"
+    #     - "testing"
+
+
+# =============================================================================
+# SESSION MANAGEMENT
+# =============================================================================
+#
+# Sessions are created when clients connect and authenticate.
+# Sessions are destroyed when clients disconnect - there is NO session resumption.
+#
+# After reconnecting, clients must:
+#   1. Re-authenticate with their token
+#   2. Re-bind to their namespace (BindNamespace)
+#   3. Re-subscribe to pollers (Subscribe)
+#
+# This design is simpler and more secure than session resumption.
+# The server buffers samples, so clients can request missed data via GetSamples.
+
+session:
+  # Maximum time (in seconds) for a client to complete authentication
+  # after establishing a connection.
+  #
+  # If authentication is not completed within this time, the connection
+  # is closed. Protects against connection exhaustion attacks.
+  #
+  # Range: 5-300 seconds
+  # Default: 30
+  auth_timeout_sec: 30
+  
+  # How often (in seconds) the session cleanup routine runs.
+  # Closed sessions are removed from memory to free resources.
+  #
+  # Lower values = more responsive cleanup, slightly higher CPU.
+  # Higher values = less frequent cleanup, slightly more memory.
+  #
+  # Range: 10-300 seconds
+  # Default: 60
+  cleanup_interval_sec: 60
+  
+  # Size of the per-session send buffer.
+  # Samples and messages are queued here before being sent to the client.
+  #
+  # If the buffer fills up (slow client), messages are dropped.
+  # Larger buffers handle bursty traffic but use more memory.
+  #
+  # Memory per session ≈ buffer_size * average_message_size
+  #
+  # Range: 100-10000
+  # Default: 1000
+  send_buffer_size: 1000
+  
+  # Timeout (in milliseconds) for sending a message to a client.
+  # If a message cannot be queued within this time (buffer full),
+  # the message is dropped.
+  #
+  # Range: 10-10000 ms
+  # Default: 100
+  send_timeout_ms: 100
+
+
+# =============================================================================
+# SCHEDULER / WORKER POOL CONFIGURATION
+# =============================================================================
+#
+# The scheduler manages poll execution using a worker pool.
+# Workers execute SNMP polls concurrently.
+
+poller:
+  # Number of concurrent poll workers.
+  # Each worker can execute one SNMP poll at a time.
+  #
+  # Sizing guidelines:
+  #   - Start with: num_pollers / avg_poll_time_seconds
+  #   - Example: 10,000 pollers at 1 poll/minute, 5s avg poll time
+  #     = 10,000 / 60 * 5 ≈ 833 concurrent polls max
+  #     = 100-200 workers is usually sufficient
+  #
+  # More workers = higher concurrency, more memory/goroutines.
+  # Fewer workers = lower concurrency, polls may queue up.
+  #
+  # Range: 1-1000
+  # Default: 100
+  workers: 100
+  
+  # Job queue capacity.
+  # Poll jobs wait here when all workers are busy.
+  #
+  # When the queue is full, new polls are delayed (backpressure).
+  # This prevents memory exhaustion during poll spikes.
+  #
+  # Sizing: Should be >= workers * expected_burst_factor
+  # Example: 100 workers * 100 burst factor = 10,000
+  #
+  # Range: 100-100000
+  # Default: 10000
+  queue_size: 10000
+
+
+# =============================================================================
+# STORAGE CONFIGURATION
+# =============================================================================
+#
+# Storage handles persistence of configuration, samples, state, and statistics.
+# Uses DuckDB as the embedded database.
+
+storage:
+  # Path to the DuckDB database file.
+  # Created automatically if it doesn't exist.
+  #
+  # Use absolute path for production deployments.
+  # Relative paths are relative to the working directory.
+  #
+  # Special value ":memory:" creates an in-memory database
+  # (data lost on restart - useful for testing only).
+  #
+  # Default: "stalker.db"
+  db_path: "stalker.db"
+  
+  # Path to the secret encryption key file.
+  # Required for storing encrypted secrets (SNMP credentials, etc.)
+  #
+  # Must be exactly 32 bytes (AES-256).
+  # Generate with: openssl rand -out secret.key 32
+  #
+  # IMPORTANT: Protect this file! If lost, encrypted secrets cannot
+  # be recovered. Recommend 0600 permissions.
+  #
+  # Leave empty if not using encrypted secrets.
+  #
+  # Default: "" (secrets not encrypted)
+  secret_key_path: ""
+  
+  # --- Sample Batching Configuration ---
+  #
+  # Samples are buffered in memory and written in batches for performance.
+  # Tuning affects write throughput vs. data latency.
+  
+  # Number of samples to batch before flushing to database.
+  # Higher values improve write throughput but increase memory usage
+  # and potential data loss window.
+  #
+  # Range: 100-10000
+  # Default: 1000
+  sample_batch_size: 1000
+  
+  # Maximum time (in seconds) to hold samples before flushing.
+  # Samples are flushed when EITHER batch_size OR this timeout is reached.
+  #
+  # Lower values = lower latency, more frequent writes.
+  # Higher values = better batching efficiency, higher latency.
+  #
+  # Range: 1-60 seconds
+  # Default: 5
+  sample_flush_timeout_sec: 5
+  
+  # Maximum retry attempts for transient database errors.
+  # Uses exponential backoff with jitter.
+  #
+  # Retryable errors: database locked, busy, timeout, connection errors.
+  # Non-retryable errors fail immediately.
+  #
+  # Range: 0-10 (0 = no retries)
+  # Default: 3
+  max_retries: 3
+  
+  # --- State and Statistics Persistence ---
+  
+  # How often (in seconds) poller state is persisted to database.
+  # State includes: oper_state, health_state, last_error, timestamps.
+  #
+  # Lower values = more durable state, more I/O.
+  # Higher values = less I/O, more state loss on crash.
+  #
+  # Range: 1-60 seconds
+  # Default: 5
+  state_flush_interval_sec: 5
+  
+  # How often (in seconds) poller statistics are persisted.
+  # Statistics include: poll counts, success/failure rates, timing.
+  #
+  # Statistics are less critical than state, so can be flushed
+  # less frequently to reduce I/O.
+  #
+  # Range: 1-300 seconds
+  # Default: 10
+  stats_flush_interval_sec: 10
+  
+  # Maximum samples to keep in overflow buffer when database is slow.
+  # If the overflow buffer fills, oldest samples are dropped.
+  #
+  # This provides resilience against temporary database slowdowns.
+  #
+  # Memory usage: max_overflow_size * average_sample_size
+  #
+  # Range: 1000-100000
+  # Default: 10000
+  max_overflow_size: 10000
+
+
+# =============================================================================
+# SNMP DEFAULT CONFIGURATION
+# =============================================================================
+#
+# Server-wide SNMP defaults. These can be overridden at:
+#   Namespace level -> Target level -> Poller level
+#
+# Override order (later overrides earlier):
+#   1. Server defaults (this section)
+#   2. Namespace defaults
+#   3. Target defaults
+#   4. Poller explicit config
+#
+# Example resolution:
+#   Server:    timeout_ms: 5000
+#   Namespace: timeout_ms: 3000  <- overrides server
+#   Target:    (not set)         <- uses namespace value
+#   Poller:    timeout_ms: 1000  <- final value used
+#   Result: timeout_ms = 1000
+
+snmp:
+  # Default timeout (in milliseconds) for a single SNMP request.
+  # If a request doesn't complete within this time, it's retried
+  # (up to 'retries' times).
+  #
+  # Include network round-trip time + device processing time.
+  # Slow devices or high-latency networks need higher values.
+  #
+  # Range: 500-30000 ms
+  # Default: 5000 (5 seconds)
+  timeout_ms: 5000
+  
+  # Default number of retry attempts after a timeout.
+  # Total attempts = 1 (initial) + retries
+  #
+  # Example: retries=2 means up to 3 total attempts.
+  #
+  # Higher values improve reliability for unreliable networks
+  # but increase poll latency on failures.
+  #
+  # Range: 0-5
+  # Default: 2
+  retries: 2
+  
+  # Default polling interval (in milliseconds).
+  # How often each poller executes its SNMP query.
+  #
+  # Common values:
+  #   5000    (5s)   - High-frequency metrics (CPU, interface counters)
+  #   60000   (1m)   - Standard metrics
+  #   300000  (5m)   - Low-frequency metrics (inventory, versions)
+  #
+  # Very low intervals (<1s) may overload target devices.
+  #
+  # Range: 1000-3600000 ms (1 second to 1 hour)
+  # Default: 60000 (1 minute)
+  interval_ms: 60000
+  
+  # Default sample buffer size per poller.
+  # Number of samples to keep in memory for streaming to subscribers.
+  #
+  # When a client subscribes, they receive buffered samples immediately,
+  # then live samples as they arrive.
+  #
+  # buffer_size * interval_ms = time window of buffered data
+  # Example: 3600 samples * 1000ms interval = 1 hour of history
+  #
+  # More samples = more memory, better reconnect experience.
+  # Fewer samples = less memory, clients may miss data on reconnect.
+  #
+  # Range: 60-86400
+  # Default: 3600 (1 hour at 1 sample/second)
+  buffer_size: 3600
+
+
+# =============================================================================
+# SHUTDOWN CONFIGURATION
+# =============================================================================
+#
+# Controls graceful shutdown behavior.
+
+shutdown:
+  # How long (in seconds) to wait for in-flight polls to complete
+  # during graceful shutdown.
+  #
+  # When shutdown is initiated:
+  #   1. Stop accepting new connections
+  #   2. Stop scheduling new polls
+  #   3. Wait up to drain_timeout for running polls to complete
+  #   4. Flush pending samples to database
+  #   5. Close database and exit
+  #
+  # If polls don't complete within this timeout, they are abandoned.
+  # Similar to Kubernetes terminationGracePeriodSeconds.
+  #
+  # Range: 5-300 seconds
+  # Default: 30
+  drain_timeout_sec: 30
+
+
+# =============================================================================
+# INCLUDE ADDITIONAL CONFIGURATION FILES
+# =============================================================================
+#
+# Include additional config files to split configuration into multiple files.
+# Useful for separating namespace definitions from server configuration.
+#
+# Supports glob patterns for including multiple files.
+# Relative paths are relative to this config file's directory.
+#
+# Included files are merged into this configuration.
+# Later files override earlier files for duplicate keys.
+
+include:
+  # Include all YAML files in conf.d directory:
+  # - "conf.d/*.yaml"
+  
+  # Include namespace-specific files:
+  # - "namespaces/production.yaml"
+  # - "namespaces/staging.yaml"
+  
+  # Include from absolute path:
+  # - "/etc/stalker/namespaces/*.yaml"
+
+
+# =============================================================================
+# NAMESPACE CONFIGURATION
+# =============================================================================
+#
+# Namespaces provide multi-tenant isolation.
+# Each namespace has its own:
+#   - Targets and Pollers
+#   - Tree structure (virtual hierarchy)
+#   - Secrets (encrypted credentials)
+#   - Configuration defaults
+#
+# Namespaces can be:
+#   1. Pre-configured here (loaded at startup)
+#   2. Created via API at runtime
+#   3. Loaded from included files (see 'include' above)
+#
+# Clients must bind to a namespace before accessing its resources.
+
+namespaces:
+  # --- Example: Production Namespace ---
+  production:
+    # Human-readable description.
+    description: "Production network monitoring"
+    
+    # --- Namespace-Level Defaults ---
+    # These override server defaults for all targets/pollers in this namespace.
+    defaults:
+      # SNMP v2c community string.
+      # Referenced as default for pollers that don't specify their own.
+      # For sensitive values, use secrets: "secret:community-prod"
+      community: "public"
+      
+      # Override server SNMP timeout for this namespace.
+      timeout_ms: 3000
+      
+      # SNMPv3 defaults (alternative to v2c community).
+      # Uncomment to use SNMPv3 by default:
+      # security_name: "monitor"
+      # security_level: "authPriv"    # noAuthNoPriv, authNoPriv, authPriv
+      # auth_protocol: "SHA256"       # MD5, SHA, SHA224, SHA256, SHA384, SHA512
+      # auth_password: "secret:auth-prod"  # Use encrypted secret
+      # priv_protocol: "AES"          # DES, AES, AES192, AES256
+      # priv_password: "secret:priv-prod"  # Use encrypted secret
+    
+    # --- Targets ---
+    # Targets represent monitored devices or endpoints.
+    targets:
+      # Target name (unique within namespace).
+      core-router:
+        description: "Core router - Datacenter 1"
+        
+        # Labels for filtering and organization.
+        # Can be used in queries: list targets where label.site=dc1
+        labels:
+          site: "dc1"
+          role: "core"
+          vendor: "cisco"
+          model: "ASR-1001"
+        
+        # Target-level defaults (override namespace defaults).
+        defaults:
+          timeout_ms: 2000
+          
+          # SNMPv3 credentials for this target.
+          # security_name: "router-monitor"
+          # auth_password: "secret:router-auth"
+          # priv_password: "secret:router-priv"
+        
+        # --- Pollers ---
+        # Pollers define what data to collect from this target.
+        pollers:
+          # Poller name (unique within target).
+          cpu:
+            description: "CPU 5-minute average utilization"
+            
+            # Protocol: currently only "snmp" is supported.
+            protocol: "snmp"
+            
+            # Protocol-specific configuration.
+            protocol_config:
+              # Target host (IP or hostname).
+              host: "192.168.1.1"
+              
+              # SNMP port.
+              # Default: 161
+              port: 161
+              
+              # SNMP version: "1", "2c", or "3"
+              # Default: "2c"
+              version: "2c"
+              
+              # OID to poll.
+              # Can be numeric (1.3.6.1.4.1...) or named (if MIB loaded).
+              oid: "1.3.6.1.4.1.9.9.109.1.1.1.1.8.1"
+              
+              # Community string (v1/v2c only).
+              # If not specified, uses target/namespace default.
+              # community: "public"
+              
+              # SNMPv3 credentials (v3 only).
+              # If not specified, uses target/namespace defaults.
+              # security_name: "monitor"
+              # security_level: "authPriv"
+              # auth_protocol: "SHA256"
+              # auth_password: "secret:cpu-auth"
+              # priv_protocol: "AES"
+              # priv_password: "secret:cpu-priv"
+            
+            # Poller-specific polling configuration.
+            # Overrides target/namespace/server defaults.
+            polling_config:
+              # How often to poll (milliseconds).
+              interval_ms: 30000  # 30 seconds
+              
+              # Timeout for this specific poller.
+              # timeout_ms: 1000
+              
+              # Retries for this specific poller.
+              # retries: 3
+              
+              # Buffer size for this specific poller.
+              # buffer_size: 7200  # 2 hours at 1 sample/second
+            
+            # Administrative state: "enabled" or "disabled"
+            # Disabled pollers are not scheduled.
+            # Default: "disabled"
+            admin_state: "enabled"
+          
+          # Another poller on the same target.
+          memory:
+            description: "Memory utilization percentage"
+            protocol: "snmp"
+            protocol_config:
+              host: "192.168.1.1"
+              oid: "1.3.6.1.4.1.9.9.48.1.1.1.6.1"
+            admin_state: "enabled"
+          
+          interface-in:
+            description: "GigabitEthernet0/0 inbound octets"
+            protocol: "snmp"
+            protocol_config:
+              host: "192.168.1.1"
+              oid: "1.3.6.1.2.1.2.2.1.10.1"  # ifInOctets.1
+            polling_config:
+              interval_ms: 5000  # 5 seconds for counters
+            admin_state: "enabled"
+      
+      # Another target in the same namespace.
+      access-switch-1:
+        description: "Access switch - Floor 1"
+        labels:
+          site: "dc1"
+          role: "access"
+          floor: "1"
+        
+        pollers:
+          uptime:
+            description: "System uptime"
+            protocol: "snmp"
+            protocol_config:
+              host: "192.168.1.10"
+              oid: "1.3.6.1.2.1.1.3.0"  # sysUpTime
+            admin_state: "enabled"
+    
+    # --- Tree Structure ---
+    # The tree provides virtual hierarchical organization.
+    # Useful for organizing by location, function, etc.
+    #
+    # Tree nodes can be:
+    #   - Directories (containers)
+    #   - Links (symlinks to targets or pollers)
+    #
+    # Example tree:
+    #   /dc1/
+    #     network/
+    #       core-router -> target:core-router
+    #       router-cpu -> poller:core-router/cpu
+    #     servers/
+    #       ...
+    tree:
+      directories:
+        - path: "/dc1"
+          description: "Datacenter 1"
+        
+        - path: "/dc1/network"
+          description: "Network devices"
+        
+        - path: "/dc1/network/core"
+          description: "Core network layer"
+      
+      links:
+        # Link to a target.
+        - name: "core-router"
+          # Display name in the tree.
+          
+          type: "target"
+          # Link type: "target" or "poller"
+          
+          ref: "core-router"
+          # Reference: target name or target/poller for pollers.
+          
+          # Path is determined by parent directory context.
+          # This link would be created in the last directory: /dc1/network/core/
+        
+        # Link to a specific poller.
+        - name: "router-cpu"
+          type: "poller"
+          ref: "core-router/cpu"
+    
+    # --- Secrets ---
+    # Encrypted credentials stored in the database.
+    # Reference in configs using "secret:name" syntax.
+    #
+    # Secrets are encrypted with the key specified in storage.secret_key_path.
+    # Values here are the PLAINTEXT values - they will be encrypted at load time.
+    #
+    # WARNING: Do not commit plaintext secrets to version control!
+    # Use environment variables: value: "${SNMP_AUTH_PASSWORD}"
+    secrets:
+      # Example: SNMPv3 authentication password.
+      router-auth:
+        type: "auth_password"
+        # Type is informational, used for validation.
+        # Values: community, auth_password, priv_password
+        
+        value: "${STALKER_ROUTER_AUTH}"
+        # The secret value (will be encrypted).
+        # Use environment variables for actual secrets!
+      
+      router-priv:
+        type: "priv_password"
+        value: "${STALKER_ROUTER_PRIV}"
+      
+      community-readonly:
+        type: "community"
+        value: "${STALKER_COMMUNITY_RO}"
+  
+  # --- Example: Development Namespace ---
+  # Minimal namespace for testing.
+  development:
+    description: "Development and testing"
+    
+    defaults:
+      community: "public"
+      interval_ms: 10000  # Faster polling for testing
+    
+    targets:
+      test-device:
+        description: "Test SNMP simulator"
+        labels:
+          environment: "dev"
+        
+        pollers:
+          test-oid:
+            description: "Test OID"
+            protocol: "snmp"
+            protocol_config:
+              host: "127.0.0.1"
+              port: 10161  # SNMP simulator port
+              oid: "1.3.6.1.2.1.1.1.0"  # sysDescr
+            admin_state: "enabled"
+
+
+# =============================================================================
+# CONFIGURATION EXAMPLES
+# =============================================================================
+#
+# Example 1: Minimal Production Configuration
+# -------------------------------------------
+#
+# listen: "0.0.0.0:9161"
+# tls:
+#   cert_file: "/etc/stalker/tls/server.crt"
+#   key_file: "/etc/stalker/tls/server.key"
+# auth:
+#   tokens:
+#     - id: "admin"
+#       token: "${STALKER_TOKEN}"
+# storage:
+#   db_path: "/var/lib/stalker/data.db"
+#   secret_key_path: "/etc/stalker/secret.key"
+# include:
+#   - "/etc/stalker/namespaces/*.yaml"
+#
+# -------------------------------------------
+#
+# Example 2: High-Throughput Configuration
+# -------------------------------------------
+#
+# poller:
+#   workers: 500
+#   queue_size: 50000
+# storage:
+#   sample_batch_size: 5000
+#   sample_flush_timeout_sec: 10
+# snmp:
+#   timeout_ms: 2000
+#   buffer_size: 7200
+#
+# -------------------------------------------
+#
+# Example 3: Low-Latency Configuration
+# -------------------------------------------
+#
+# storage:
+#   sample_batch_size: 100
+#   sample_flush_timeout_sec: 1
+#   state_flush_interval_sec: 1
+# session:
+#   send_buffer_size: 500
+#   send_timeout_ms: 50
+#
+# -------------------------------------------
+
+
+# =============================================================================
+# TROUBLESHOOTING
+# =============================================================================
+#
+# Common Issues:
+#
+# 1. "authentication failed"
+#    - Verify token matches exactly (case-sensitive)
+#    - Check environment variables are set
+#    - Verify TLS is configured consistently (client and server)
+#
+# 2. "namespace not found"
+#    - Client must bind to namespace before accessing resources
+#    - Verify namespace exists in config or was created via API
+#    - Check token has access to the namespace
+#
+# 3. "SNMP timeout"
+#    - Increase snmp.timeout_ms
+#    - Verify target device is reachable (ping, snmpget)
+#    - Check firewall allows UDP 161
+#    - Verify community string or SNMPv3 credentials
+#
+# 4. "database locked"
+#    - Increase storage.max_retries
+#    - Check disk I/O performance
+#    - Consider using SSD for database
+#
+# 5. High memory usage
+#    - Reduce session.send_buffer_size
+#    - Reduce snmp.buffer_size
+#    - Reduce storage.max_overflow_size
+#
+# 6. Polls falling behind
+#    - Increase poller.workers
+#    - Increase poller.queue_size
+#    - Reduce poll frequency (increase interval_ms)
+#    - Check network latency to targets
+#
+# =============================================================================
