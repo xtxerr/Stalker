@@ -1,12 +1,8 @@
-// LOCATION: internal/client/client.go
-// VERSION: 2.0 - Fixed double-close, improved state management
+// Package client provides a client for connecting to the stalker server.
 //
-// FIXES:
-// - State machine to prevent double-close
-// - sync.Once for guaranteed single close
-// - Proper connection state tracking
-// - Context support for operations
-
+// FIXES APPLIED:
+// - FIX #4: Uses ResettableOnce instead of sync.Once for safe reconnection
+// - FIX #11: Explicit state machine with validated transitions
 package client
 
 import (
@@ -17,58 +13,87 @@ import (
 	"net"
 	"sync"
 	"sync/atomic"
-  stalkerSync "github.com/xtxerr/stalker/internal/sync"
 	"time"
 
 	pb "github.com/xtxerr/stalker/internal/proto"
+	stalkerSync "github.com/xtxerr/stalker/internal/sync"
 	"github.com/xtxerr/stalker/internal/wire"
 )
 
-// ============================================================================
-// Client States
-// ============================================================================
+// =============================================================================
+// FIX #11: Explicit State Machine Definition
+// =============================================================================
+
+// ClientState represents the connection state of a client.
+type ClientState int32
 
 const (
-	stateDisconnected int32 = iota
-	stateConnecting
-	stateConnected
-	stateClosing
-	stateClosed
+	StateDisconnected ClientState = iota
+	StateConnecting
+	StateConnected
+	StateClosing
+	StateClosed
 )
 
-func stateName(s int32) string {
+// String returns the human-readable name of the state.
+func (s ClientState) String() string {
 	switch s {
-	case stateDisconnected:
+	case StateDisconnected:
 		return "disconnected"
-	case stateConnecting:
+	case StateConnecting:
 		return "connecting"
-	case stateConnected:
+	case StateConnected:
 		return "connected"
-	case stateClosing:
+	case StateClosing:
 		return "closing"
-	case stateClosed:
+	case StateClosed:
 		return "closed"
 	default:
 		return fmt.Sprintf("unknown(%d)", s)
 	}
 }
 
-// ============================================================================
+// stateTransition represents a state transition.
+type stateTransition struct {
+	from ClientState
+	to   ClientState
+}
+
+// validTransitions defines all allowed state transitions.
+var validTransitions = map[stateTransition]bool{
+	// From Disconnected
+	{StateDisconnected, StateConnecting}: true,
+	{StateDisconnected, StateClosed}:     true,
+
+	// From Connecting
+	{StateConnecting, StateConnected}:    true,
+	{StateConnecting, StateDisconnected}: true,
+
+	// From Connected
+	{StateConnected, StateDisconnected}: true,
+	{StateConnected, StateClosing}:      true,
+
+	// From Closing
+	{StateClosing, StateClosed}: true,
+}
+
+// =============================================================================
 // Errors
-// ============================================================================
+// =============================================================================
 
 var (
-	ErrClientClosed     = errors.New("client is closed")
-	ErrClientClosing    = errors.New("client is closing")
-	ErrNotConnected     = errors.New("not connected")
-	ErrAlreadyConnected = errors.New("already connected")
-	ErrAuthFailed       = errors.New("authentication failed")
-	ErrTimeout          = errors.New("request timeout")
+	ErrClientClosed      = errors.New("client is closed")
+	ErrClientClosing     = errors.New("client is closing")
+	ErrNotConnected      = errors.New("not connected")
+	ErrAlreadyConnected  = errors.New("already connected")
+	ErrAuthFailed        = errors.New("authentication failed")
+	ErrTimeout           = errors.New("request timeout")
+	ErrInvalidTransition = errors.New("invalid state transition")
 )
 
-// ============================================================================
+// =============================================================================
 // Client
-// ============================================================================
+// =============================================================================
 
 // Client connects to an SNMP proxy server.
 type Client struct {
@@ -82,8 +107,10 @@ type Client struct {
 	wire      *wire.Conn
 	sessionID string
 
-	// State management
-	state     atomic.Int32
+	// FIX #11: State management with explicit transitions
+	state atomic.Int32
+
+	// FIX #4: Resettable once for safe reconnection
 	closeOnce stalkerSync.ResettableOnce
 
 	// Pending requests
@@ -140,9 +167,43 @@ func New(cfg *Config) *Client {
 	return c
 }
 
-// ============================================================================
+// =============================================================================
+// FIX #11: State Transition Methods
+// =============================================================================
+
+// getState returns the current state.
+func (c *Client) getState() ClientState {
+	return ClientState(c.state.Load())
+}
+
+// transitionTo attempts to transition to a new state.
+func (c *Client) transitionTo(newState ClientState) error {
+	for {
+		oldState := c.getState()
+		transition := stateTransition{from: oldState, to: newState}
+
+		if !validTransitions[transition] {
+			return fmt.Errorf("%w: %s -> %s", ErrInvalidTransition, oldState, newState)
+		}
+
+		if c.state.CompareAndSwap(int32(oldState), int32(newState)) {
+			return nil
+		}
+	}
+}
+
+// transitionFrom attempts to transition from a specific state to a new state.
+func (c *Client) transitionFrom(from, to ClientState) bool {
+	transition := stateTransition{from: from, to: to}
+	if !validTransitions[transition] {
+		return false
+	}
+	return c.state.CompareAndSwap(int32(from), int32(to))
+}
+
+// =============================================================================
 // Connection Management
-// ============================================================================
+// =============================================================================
 
 // Connect connects and authenticates to the server.
 func (c *Client) Connect() error {
@@ -151,35 +212,33 @@ func (c *Client) Connect() error {
 
 // ConnectWithContext connects with a context for timeout/cancellation.
 func (c *Client) ConnectWithContext(ctx context.Context) error {
-	// Check state
-	currentState := c.state.Load()
-	if currentState == stateClosed {
+	currentState := c.getState()
+	switch currentState {
+	case StateClosed:
 		return ErrClientClosed
-	}
-	if currentState == stateClosing {
+	case StateClosing:
 		return ErrClientClosing
-	}
-	if currentState == stateConnected {
+	case StateConnected:
 		return ErrAlreadyConnected
+	case StateConnecting:
+		return fmt.Errorf("connection already in progress")
 	}
 
-	// Try to transition to connecting
-	if !c.state.CompareAndSwap(stateDisconnected, stateConnecting) {
-		return fmt.Errorf("cannot connect: current state is %s", stateName(c.state.Load()))
+	// FIX #11: Validated transition to connecting
+	if !c.transitionFrom(StateDisconnected, StateConnecting) {
+		return fmt.Errorf("cannot connect: current state is %s", c.getState())
 	}
 
-	// On failure, reset to disconnected
 	success := false
 	defer func() {
 		if !success {
-			c.state.Store(stateDisconnected)
+			c.transitionFrom(StateConnecting, StateDisconnected)
 		}
 	}()
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Dial connection
 	var conn net.Conn
 	var err error
 
@@ -197,7 +256,6 @@ func (c *Client) ConnectWithContext(ctx context.Context) error {
 	c.conn = conn
 	c.wire = wire.NewConn(conn)
 
-	// Authenticate
 	if err := c.authenticate(ctx); err != nil {
 		conn.Close()
 		c.conn = nil
@@ -205,18 +263,20 @@ func (c *Client) ConnectWithContext(ctx context.Context) error {
 		return err
 	}
 
-	// Start read loop
 	go c.readLoop()
 
-	// Mark as connected
-	c.state.Store(stateConnected)
-	success = true
+	if err := c.transitionTo(StateConnected); err != nil {
+		conn.Close()
+		c.conn = nil
+		c.wire = nil
+		return err
+	}
 
+	success = true
 	return nil
 }
 
 func (c *Client) authenticate(ctx context.Context) error {
-	// Send auth request
 	if err := c.wire.Write(&pb.Envelope{
 		Id: 1,
 		Payload: &pb.Envelope_AuthReq{
@@ -226,7 +286,6 @@ func (c *Client) authenticate(ctx context.Context) error {
 		return fmt.Errorf("send auth: %w", err)
 	}
 
-	// Set read deadline from context
 	if deadline, ok := ctx.Deadline(); ok {
 		c.conn.SetReadDeadline(deadline)
 	} else {
@@ -234,18 +293,15 @@ func (c *Client) authenticate(ctx context.Context) error {
 	}
 	defer c.conn.SetReadDeadline(time.Time{})
 
-	// Read auth response
 	env, err := c.wire.Read()
 	if err != nil {
 		return fmt.Errorf("read auth response: %w", err)
 	}
 
-	// Check for error
 	if e := env.GetError(); e != nil {
 		return fmt.Errorf("auth error: %s", e.Message)
 	}
 
-	// Check response
 	resp := env.GetAuthResp()
 	if resp == nil || !resp.Ok {
 		msg := "authentication failed"
@@ -260,21 +316,26 @@ func (c *Client) authenticate(ctx context.Context) error {
 }
 
 // Close closes the client connection.
-// FIX: Uses sync.Once to prevent double-close panic.
+//
+// FIX #4: Uses ResettableOnce.Do for thread-safe close.
 func (c *Client) Close() error {
 	var closeErr error
 
 	c.closeOnce.Do(func() {
-		// Transition to closing state
-		oldState := c.state.Swap(stateClosing)
-		if oldState == stateClosed || oldState == stateClosing {
+		currentState := c.getState()
+		if currentState == StateClosed || currentState == StateClosing {
 			return
 		}
 
-		// Signal shutdown
+		if currentState == StateConnected {
+			c.transitionFrom(StateConnected, StateClosing)
+		} else if currentState == StateDisconnected {
+			c.transitionFrom(StateDisconnected, StateClosed)
+			return
+		}
+
 		close(c.shutdown)
 
-		// Close connection
 		c.mu.Lock()
 		if c.conn != nil {
 			closeErr = c.conn.Close()
@@ -283,7 +344,6 @@ func (c *Client) Close() error {
 		}
 		c.mu.Unlock()
 
-		// Cancel pending requests
 		c.pendingMu.Lock()
 		for id, ch := range c.pending {
 			close(ch)
@@ -291,8 +351,7 @@ func (c *Client) Close() error {
 		}
 		c.pendingMu.Unlock()
 
-		// Mark as closed
-		c.state.Store(stateClosed)
+		c.transitionFrom(StateClosing, StateClosed)
 	})
 
 	return closeErr
@@ -304,14 +363,15 @@ func (c *Client) Reconnect() error {
 }
 
 // ReconnectWithContext attempts to reconnect with context.
+//
+// FIX #4: Uses ResettableOnce.Reset() for thread-safe reset.
 func (c *Client) ReconnectWithContext(ctx context.Context) error {
-	currentState := c.state.Load()
-	if currentState == stateClosed {
+	currentState := c.getState()
+	if currentState == StateClosed {
 		return ErrClientClosed
 	}
 
 	c.mu.Lock()
-	// Close existing connection if any
 	if c.conn != nil {
 		c.conn.Close()
 		c.conn = nil
@@ -319,10 +379,8 @@ func (c *Client) ReconnectWithContext(ctx context.Context) error {
 	}
 	c.mu.Unlock()
 
-	// Reset state
-	c.state.Store(stateDisconnected)
+	c.state.Store(int32(StateDisconnected))
 
-	// Cancel pending requests
 	c.pendingMu.Lock()
 	for id, ch := range c.pending {
 		close(ch)
@@ -331,17 +389,17 @@ func (c *Client) ReconnectWithContext(ctx context.Context) error {
 	c.pending = make(map[uint64]chan *pb.Envelope)
 	c.pendingMu.Unlock()
 
-	// Recreate shutdown channel
 	c.shutdown = make(chan struct{})
+
+	// FIX #4: Thread-safe reset of closeOnce
 	c.closeOnce.Reset()
 
-	// Connect
 	return c.ConnectWithContext(ctx)
 }
 
-// ============================================================================
+// =============================================================================
 // State Queries
-// ============================================================================
+// =============================================================================
 
 // SessionID returns the session ID.
 func (c *Client) SessionID() string {
@@ -352,22 +410,22 @@ func (c *Client) SessionID() string {
 
 // IsConnected returns true if connected.
 func (c *Client) IsConnected() bool {
-	return c.state.Load() == stateConnected
+	return c.getState() == StateConnected
 }
 
 // IsClosed returns true if permanently closed.
 func (c *Client) IsClosed() bool {
-	return c.state.Load() == stateClosed
+	return c.getState() == StateClosed
 }
 
 // State returns the current state as a string.
 func (c *Client) State() string {
-	return stateName(c.state.Load())
+	return c.getState().String()
 }
 
-// ============================================================================
+// =============================================================================
 // Callbacks
-// ============================================================================
+// =============================================================================
 
 // OnSample sets the handler for pushed samples.
 func (c *Client) OnSample(fn func(*pb.Sample)) {
@@ -383,15 +441,14 @@ func (c *Client) OnDisconnect(fn func(error)) {
 	c.pendingMu.Unlock()
 }
 
-// ============================================================================
+// =============================================================================
 // Read Loop
-// ============================================================================
+// =============================================================================
 
 func (c *Client) readLoop() {
 	var disconnectErr error
 
 	defer func() {
-		// Notify disconnect callback
 		c.pendingMu.RLock()
 		fn := c.onDisconnect
 		c.pendingMu.RUnlock()
@@ -402,21 +459,18 @@ func (c *Client) readLoop() {
 	}()
 
 	for {
-		// Check state before each read
-		if c.state.Load() != stateConnected {
+		if c.getState() != StateConnected {
 			return
 		}
 
 		env, err := c.wire.Read()
 		if err != nil {
-			// Check if intentional close
-			if c.state.Load() != stateConnected {
+			if c.getState() != StateConnected {
 				return
 			}
 
-			// Unexpected disconnect
 			disconnectErr = err
-			c.state.CompareAndSwap(stateConnected, stateDisconnected)
+			c.transitionFrom(StateConnected, StateDisconnected)
 			return
 		}
 
@@ -425,7 +479,6 @@ func (c *Client) readLoop() {
 }
 
 func (c *Client) handleMessage(env *pb.Envelope) {
-	// Handle pushed sample
 	if sample := env.GetSample(); sample != nil {
 		c.pendingMu.RLock()
 		fn := c.onSample
@@ -437,7 +490,6 @@ func (c *Client) handleMessage(env *pb.Envelope) {
 		return
 	}
 
-	// Handle response to request
 	c.pendingMu.RLock()
 	ch, ok := c.pending[env.Id]
 	c.pendingMu.RUnlock()
@@ -446,25 +498,22 @@ func (c *Client) handleMessage(env *pb.Envelope) {
 		select {
 		case ch <- env:
 		default:
-			// Channel full or closed
 		}
 	}
 }
 
-// ============================================================================
+// =============================================================================
 // Request/Response
-// ============================================================================
+// =============================================================================
 
 func (c *Client) request(ctx context.Context, env *pb.Envelope) (*pb.Envelope, error) {
-	if c.state.Load() != stateConnected {
+	if c.getState() != StateConnected {
 		return nil, ErrNotConnected
 	}
 
-	// Generate request ID
 	id := c.requestID.Add(1)
 	env.Id = id
 
-	// Create response channel
 	ch := make(chan *pb.Envelope, 1)
 
 	c.pendingMu.Lock()
@@ -477,7 +526,6 @@ func (c *Client) request(ctx context.Context, env *pb.Envelope) (*pb.Envelope, e
 		c.pendingMu.Unlock()
 	}()
 
-	// Send request
 	c.mu.Lock()
 	err := c.wire.Write(env)
 	c.mu.Unlock()
@@ -486,7 +534,6 @@ func (c *Client) request(ctx context.Context, env *pb.Envelope) (*pb.Envelope, e
 		return nil, fmt.Errorf("write request: %w", err)
 	}
 
-	// Wait for response
 	select {
 	case resp, ok := <-ch:
 		if !ok {
@@ -505,135 +552,14 @@ func (c *Client) request(ctx context.Context, env *pb.Envelope) (*pb.Envelope, e
 	}
 }
 
-// Request sends a request and waits for response.
+// Request sends a request and waits for response with default timeout.
 func (c *Client) Request(env *pb.Envelope) (*pb.Envelope, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	return c.request(ctx, env)
 }
 
-// RequestWithContext sends a request with context.
+// RequestWithContext sends a request with a custom context.
 func (c *Client) RequestWithContext(ctx context.Context, env *pb.Envelope) (*pb.Envelope, error) {
 	return c.request(ctx, env)
-}
-
-// ============================================================================
-// High-Level Operations
-// ============================================================================
-
-// BindNamespace binds the session to a namespace.
-func (c *Client) BindNamespace(namespace string) error {
-	_, err := c.Request(&pb.Envelope{
-		Payload: &pb.Envelope_BindNamespaceReq{
-			BindNamespaceReq: &pb.BindNamespaceRequest{Namespace: namespace},
-		},
-	})
-	return err
-}
-
-// Browse retrieves information at the given path.
-func (c *Client) Browse(req *pb.BrowseRequest) (*pb.BrowseResponse, error) {
-	resp, err := c.Request(&pb.Envelope{
-		Payload: &pb.Envelope_BrowseReq{BrowseReq: req},
-	})
-	if err != nil {
-		return nil, err
-	}
-	return resp.GetBrowseResp(), nil
-}
-
-// BrowsePath is a convenience method for simple path browsing.
-func (c *Client) BrowsePath(path string, longFormat bool) (*pb.BrowseResponse, error) {
-	return c.Browse(&pb.BrowseRequest{
-		Path:       path,
-		LongFormat: longFormat,
-	})
-}
-
-// CreateTarget creates a new target.
-func (c *Client) CreateTarget(req *pb.CreateTargetRequest) (*pb.CreateTargetResponse, error) {
-	resp, err := c.Request(&pb.Envelope{
-		Payload: &pb.Envelope_CreateTargetReq{CreateTargetReq: req},
-	})
-	if err != nil {
-		return nil, err
-	}
-	return resp.GetCreateTargetResp(), nil
-}
-
-// UpdateTarget updates a target.
-func (c *Client) UpdateTarget(req *pb.UpdateTargetRequest) (*pb.UpdateTargetResponse, error) {
-	resp, err := c.Request(&pb.Envelope{
-		Payload: &pb.Envelope_UpdateTargetReq{UpdateTargetReq: req},
-	})
-	if err != nil {
-		return nil, err
-	}
-	return resp.GetUpdateTargetResp(), nil
-}
-
-// DeleteTarget deletes a target.
-func (c *Client) DeleteTarget(req *pb.DeleteTargetRequest) (*pb.DeleteTargetResponse, error) {
-	resp, err := c.Request(&pb.Envelope{
-		Payload: &pb.Envelope_DeleteTargetReq{DeleteTargetReq: req},
-	})
-	if err != nil {
-		return nil, err
-	}
-	return resp.GetDeleteTargetResp(), nil
-}
-
-// CreatePoller creates a new poller.
-func (c *Client) CreatePoller(req *pb.CreatePollerRequest) (*pb.CreatePollerResponse, error) {
-	resp, err := c.Request(&pb.Envelope{
-		Payload: &pb.Envelope_CreatePollerReq{CreatePollerReq: req},
-	})
-	if err != nil {
-		return nil, err
-	}
-	return resp.GetCreatePollerResp(), nil
-}
-
-// EnablePoller enables a poller.
-func (c *Client) EnablePoller(req *pb.EnablePollerRequest) (*pb.EnablePollerResponse, error) {
-	resp, err := c.Request(&pb.Envelope{
-		Payload: &pb.Envelope_EnablePollerReq{EnablePollerReq: req},
-	})
-	if err != nil {
-		return nil, err
-	}
-	return resp.GetEnablePollerResp(), nil
-}
-
-// DisablePoller disables a poller.
-func (c *Client) DisablePoller(req *pb.DisablePollerRequest) (*pb.DisablePollerResponse, error) {
-	resp, err := c.Request(&pb.Envelope{
-		Payload: &pb.Envelope_DisablePollerReq{DisablePollerReq: req},
-	})
-	if err != nil {
-		return nil, err
-	}
-	return resp.GetDisablePollerResp(), nil
-}
-
-// Subscribe subscribes to poller samples.
-func (c *Client) Subscribe(req *pb.SubscribeRequest) (*pb.SubscribeResponse, error) {
-	resp, err := c.Request(&pb.Envelope{
-		Payload: &pb.Envelope_SubscribeReq{SubscribeReq: req},
-	})
-	if err != nil {
-		return nil, err
-	}
-	return resp.GetSubscribeResp(), nil
-}
-
-// Unsubscribe unsubscribes from poller samples.
-func (c *Client) Unsubscribe(req *pb.UnsubscribeRequest) (*pb.UnsubscribeResponse, error) {
-	resp, err := c.Request(&pb.Envelope{
-		Payload: &pb.Envelope_UnsubscribeReq{UnsubscribeReq: req},
-	})
-	if err != nil {
-		return nil, err
-	}
-	return resp.GetUnsubscribeResp(), nil
 }
