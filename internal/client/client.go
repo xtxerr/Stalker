@@ -17,6 +17,7 @@ import (
 	"net"
 	"sync"
 	"sync/atomic"
+  stalkerSync "github.com/xtxerr/stalker/internal/sync"
 	"time"
 
 	pb "github.com/xtxerr/stalker/internal/proto"
@@ -83,7 +84,7 @@ type Client struct {
 
 	// State management
 	state     atomic.Int32
-	closeOnce sync.Once
+	closeOnce stalkerSync.ResettableOnce
 
 	// Pending requests
 	pendingMu sync.RWMutex
@@ -332,7 +333,7 @@ func (c *Client) ReconnectWithContext(ctx context.Context) error {
 
 	// Recreate shutdown channel
 	c.shutdown = make(chan struct{})
-	c.closeOnce = sync.Once{} // Reset closeOnce for new connection
+	c.closeOnce.Reset()
 
 	// Connect
 	return c.ConnectWithContext(ctx)

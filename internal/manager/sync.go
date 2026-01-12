@@ -2,6 +2,9 @@
 //
 // This file implements the SyncManager which handles batched persistence
 // of state, stats, and samples to the database.
+//
+// FIX #10: Updated to use context-aware store methods. All flush operations
+// now properly propagate context for timeout/cancellation support.
 package manager
 
 import (
@@ -121,7 +124,7 @@ func (m *SyncManager) Stop() {
 	close(m.shutdown)
 	m.wg.Wait()
 
-	// Final flush
+	// Final flush with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -271,9 +274,13 @@ func (m *SyncManager) sampleFlushLoop() {
 }
 
 // =============================================================================
-// Flush Operations with Retry
+// Flush Operations - FIX #10: Now using context-aware store methods
 // =============================================================================
 
+// flushStates flushes dirty poller states to the database.
+//
+// FIX #10: Now uses BatchUpdatePollerStatesContext for proper context propagation.
+// Previously called BatchUpdatePollerStates which ignored the context parameter.
 func (m *SyncManager) flushStates(ctx context.Context) {
 	if m.stateManager == nil {
 		return
@@ -289,7 +296,8 @@ func (m *SyncManager) flushStates(ctx context.Context) {
 		storeStates = append(storeStates, s.ToStoreState())
 	}
 
-	err := m.store.BatchUpdatePollerStates(storeStates)
+	// FIX #10: Use context-aware method - context is now properly propagated
+	err := m.store.BatchUpdatePollerStatesContext(ctx, storeStates)
 	if err != nil {
 		syncLog.Error("failed to flush states", "error", err, "count", len(states))
 		m.flushErrors.Add(1)
@@ -304,6 +312,10 @@ func (m *SyncManager) flushStates(ctx context.Context) {
 	syncLog.Debug("flushed poller states", "count", len(storeStates))
 }
 
+// flushStats flushes poller stats to the database.
+//
+// FIX #10: Now uses BatchUpdatePollerStatsContext for proper context propagation.
+// Previously called BatchUpdatePollerStats which ignored the context parameter.
 func (m *SyncManager) flushStats(ctx context.Context) {
 	if m.statsManager == nil {
 		return
@@ -319,7 +331,8 @@ func (m *SyncManager) flushStats(ctx context.Context) {
 		storeStats = append(storeStats, s.ToStoreStats())
 	}
 
-	err := m.store.BatchUpdatePollerStats(storeStats)
+	// FIX #10: Use context-aware method - context is now properly propagated
+	err := m.store.BatchUpdatePollerStatsContext(ctx, storeStats)
 	if err != nil {
 		syncLog.Error("failed to flush stats", "error", err, "count", len(stats))
 		m.flushErrors.Add(1)
@@ -354,7 +367,7 @@ func (m *SyncManager) flushSamplesWithRetry(ctx context.Context) {
 }
 
 // =============================================================================
-// Retry Logic
+// Retry Logic - FIX #10: Now using context-aware store methods
 // =============================================================================
 
 // RetryConfig holds retry configuration for database operations.
@@ -377,9 +390,8 @@ func DefaultRetryConfig() *RetryConfig {
 
 // insertSamplesWithRetry inserts samples with automatic retry on transient errors.
 //
-// FIX #19: This function implements exponential backoff with jitter for
-// transient database errors. The previous implementation had no retry logic,
-// causing samples to be lost on temporary database issues.
+// FIX #10: Now uses InsertSamplesBatchContext for proper context propagation.
+// FIX #19: Implements exponential backoff with jitter for transient database errors.
 func (m *SyncManager) insertSamplesWithRetry(ctx context.Context, samples []*store.Sample) error {
 	cfg := &RetryConfig{
 		MaxRetries:     m.maxRetries,
@@ -399,7 +411,8 @@ func (m *SyncManager) insertSamplesWithRetry(ctx context.Context, samples []*sto
 		default:
 		}
 
-		err := m.store.InsertSamplesBatch(samples)
+		// FIX #10: Use context-aware method - context is now properly propagated
+		err := m.store.InsertSamplesBatchContext(ctx, samples)
 		if err == nil {
 			return nil // Success
 		}
