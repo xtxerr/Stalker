@@ -30,18 +30,6 @@ var log = logging.Component("scheduler")
 // Types
 // =============================================================================
 
-// PollerKey uniquely identifies a poller.
-type PollerKey struct {
-	Namespace string
-	Target    string
-	Poller    string
-}
-
-// String returns the string representation of the key.
-func (k PollerKey) String() string {
-	return k.Namespace + "/" + k.Target + "/" + k.Poller
-}
-
 // PollJob represents a poll job to be executed.
 type PollJob struct {
 	Key PollerKey

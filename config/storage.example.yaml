@@ -1,0 +1,136 @@
+# Stalker Storage Configuration Example
+# =====================================
+#
+# This configuration file defines the time-series storage system settings.
+# Copy this file to 'storage.yaml' and adjust values as needed.
+
+# Data directory for all storage files
+data_dir: /var/lib/stalker/storage
+
+# Scale configuration - defines expected load
+scale:
+  # Expected number of pollers (metrics series)
+  poller_count: 10000000
+  
+  # Polling interval in seconds
+  poll_interval_sec: 25
+
+# Feature configuration
+features:
+  # Raw sample buffer (in-memory)
+  raw_buffer:
+    # Enable in-memory buffer for recent samples
+    enabled: true
+    
+    # Buffer duration (samples older than this are evicted)
+    # Format: "5m", "10m", "30m"
+    duration: 5m
+    
+    # Alternative: memory limit (e.g., "4GB")
+    # memory_limit: 4GB
+
+  # Percentile calculation using DDSketch
+  percentile:
+    # Enable percentile calculation (P50, P90, P95, P99)
+    enabled: true
+    
+    # Relative accuracy (0.01 = 1% error)
+    accuracy: 0.01
+
+  # Compression settings for Parquet files
+  compression:
+    # Compression algorithm: snappy, zstd, lz4, none
+    algorithm: zstd
+    
+    # Compression level (for zstd: 1-22, default: 3)
+    level: 3
+
+# Retention configuration - how long to keep data
+retention:
+  # Raw samples (25s resolution)
+  raw: 48h
+  
+  # 5-minute aggregates
+  five_min: 720h  # 30 days
+  
+  # Hourly aggregates
+  hourly: 2160h   # 90 days
+  
+  # Daily aggregates
+  daily: 17520h   # 2 years
+  
+  # Weekly aggregates
+  weekly: 87600h  # 10 years
+
+# Ingestion settings
+ingestion:
+  # WAL (Write-Ahead Log) settings
+  wal:
+    # WAL directory (default: {data_dir}/wal)
+    # dir: /var/lib/stalker/storage/wal
+    
+    # Sync mode: async, sync, fsync
+    sync_mode: async
+    
+    # Sync interval for async mode
+    sync_interval: 1s
+    
+    # Maximum segment size before rotation
+    max_segment_size: 100MB
+
+  # Flush settings
+  flush:
+    # Flush interval for raw data
+    interval: 10m
+    
+    # Flush when buffer reaches this size
+    max_buffer_size: 100MB
+
+# Compaction settings
+compaction:
+  # Number of parallel compaction workers
+  workers: 4
+  
+  # Schedule for compaction jobs (cron-like)
+  schedule:
+    # Raw to 5min: every hour
+    raw_to_5min: "0 * * * *"
+    
+    # 5min to hourly: daily at 2am
+    five_min_to_hourly: "0 2 * * *"
+    
+    # Hourly to daily: weekly on Sunday at 3am
+    hourly_to_daily: "0 3 * * 0"
+    
+    # Daily to weekly: monthly on 1st at 4am
+    daily_to_weekly: "0 4 1 * *"
+
+# Backpressure settings
+backpressure:
+  # Enable backpressure handling
+  enabled: true
+  
+  # Buffer usage thresholds for level changes
+  thresholds:
+    warning: 0.50    # 50% - pause compaction
+    critical: 0.80   # 80% - throttle pollers
+    emergency: 0.95  # 95% - drop samples
+  
+  # Recovery settings
+  recovery:
+    # Hysteresis to prevent flapping
+    hysteresis: 0.10
+    
+    # Minimum time between level changes
+    cooldown: 30s
+
+# Query settings
+query:
+  # DuckDB memory limit
+  memory_limit: 2GB
+  
+  # Query timeout
+  timeout: 30s
+  
+  # Maximum rows returned
+  max_rows: 1000000

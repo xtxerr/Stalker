@@ -12,4 +12,7 @@ var (
 	ErrInUse                  = errors.ErrInUse
 	ErrInvalidReference       = errors.ErrInvalidReference
 	ErrSecretKeyNotConfigured = errors.ErrSecretKeyNotConfigured
+
+	// Poller-specific aliases
+	ErrPollerNotFound = errors.ErrNotFound
 )

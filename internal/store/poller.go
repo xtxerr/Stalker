@@ -764,21 +764,7 @@ func parsePollerKey(key string) (namespace, target, name string) {
 	return "", "", ""
 }
 
-// ListAllPollers returns all pollers across all namespaces.
-func (s *Store) ListAllPollers() ([]*Poller, error) {
-	rows, err := s.db.Query(`
-		SELECT namespace, target, name, description, protocol, protocol_config,
-		       polling_config, admin_state, source, content_hash, synced_at,
-		       created_at, updated_at, version
-		FROM pollers ORDER BY namespace, target, name
-	`)
-	if err != nil {
-		return nil, fmt.Errorf("query pollers: %w", err)
-	}
-	defer rows.Close()
 
-	return scanPollersWithSync(rows)
-}
 
 // ListPollersByNamespace returns all pollers in a namespace.
 func (s *Store) ListPollersByNamespace(namespace string) ([]*Poller, error) {
@@ -837,12 +823,4 @@ func scanPollersWithSync(rows *sql.Rows) ([]*Poller, error) {
 	return pollers, rows.Err()
 }
 
-// =============================================================================
-// Errors
-// =============================================================================
 
-// ErrPollerNotFound is returned when a poller doesn't exist.
-var ErrPollerNotFound = fmt.Errorf("poller not found")
-
-// ErrConcurrentModification is returned when a version mismatch is detected.
-var ErrConcurrentModification = fmt.Errorf("concurrent modification detected (version mismatch)")

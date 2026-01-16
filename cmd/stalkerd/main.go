@@ -12,6 +12,7 @@ import (
 	"github.com/xtxerr/stalker/internal/loader"
 	"github.com/xtxerr/stalker/internal/manager"
 	"github.com/xtxerr/stalker/internal/server"
+	"github.com/xtxerr/stalker/internal/storage"
 	"github.com/xtxerr/stalker/internal/store"
 )
 
@@ -26,7 +27,7 @@ func main() {
 	tlsCert := flag.String("tls-cert", "", "TLS certificate file")
 	tlsKey := flag.String("tls-key", "", "TLS key file")
 	token := flag.String("token", "", "auth token (or STALKER_TOKEN env)")
-	dbPath := flag.String("db", "", "database path (overrides config)")
+	dbPath := flag.String("db", "", "metastore database path (overrides config)")
 	watch := flag.Bool("watch", false, "watch config for changes")
 	flag.Parse()
 
@@ -38,9 +39,7 @@ func main() {
 	if err != nil {
 		if os.IsNotExist(err) {
 			log.Printf("No config file found, using defaults")
-			cfg = &loader.Config{
-				Listen: "0.0.0.0:9161",
-			}
+			cfg = loader.DefaultConfig()
 		} else {
 			log.Fatalf("Load config: %v", err)
 		}
@@ -61,7 +60,7 @@ func main() {
 		cfg.TLS.KeyFile = *tlsKey
 	}
 	if *dbPath != "" {
-		cfg.Storage.DBPath = *dbPath
+		cfg.Metastore.Path = *dbPath
 	}
 
 	// Token from flag or env
@@ -78,12 +77,12 @@ func main() {
 		log.Fatal("At least one auth token required (use -token or config)")
 	}
 
-	// Set defaults
+	// Apply defaults where needed
 	if cfg.Listen == "" {
 		cfg.Listen = "0.0.0.0:9161"
 	}
-	if cfg.Storage.DBPath == "" {
-		cfg.Storage.DBPath = "stalker.db"
+	if cfg.Metastore.Path == "" {
+		cfg.Metastore.Path = "stalker.db"
 	}
 	if cfg.Poller.Workers == 0 {
 		cfg.Poller.Workers = 100
@@ -98,10 +97,15 @@ func main() {
 		cfg.Session.ReconnectWindowSec = 600
 	}
 
-	// Create manager
+	// =========================================================================
+	// Initialize Metastore (DuckDB - config, state, stats)
+	// =========================================================================
+
+	log.Printf("Initializing metastore: %s", cfg.Metastore.Path)
+
 	mgr, err := manager.New(&manager.Config{
-		DBPath:        cfg.Storage.DBPath,
-		SecretKeyPath: cfg.Storage.SecretKeyPath,
+		DBPath:        cfg.Metastore.Path,
+		SecretKeyPath: cfg.Metastore.SecretKeyPath,
 		Version:       Version,
 	})
 	if err != nil {
@@ -116,7 +120,36 @@ func main() {
 		DefaultBufferSize: cfg.SNMP.BufferSize,
 	})
 
-	// Apply config (namespaces, targets, pollers)
+	// =========================================================================
+	// Initialize Samplestore (Parquet + WAL - time-series data)
+	// =========================================================================
+
+	var sampleStore *storage.Service
+	if cfg.Samplestore.Enabled {
+		log.Printf("Initializing samplestore: %s", cfg.Samplestore.DataDir)
+
+		// Convert loader config to storage config
+		storageCfg := loader.ToSamplestoreConfig(&cfg.Samplestore)
+
+		sampleStore, err = storage.New(storageCfg)
+		if err != nil {
+			log.Fatalf("Create samplestore: %v", err)
+		}
+
+		if err := sampleStore.Start(); err != nil {
+			log.Fatalf("Start samplestore: %v", err)
+		}
+
+		log.Printf("Samplestore started (data_dir=%s, expected_pollers=%d)",
+			cfg.Samplestore.DataDir, cfg.Samplestore.Scale.PollerCount)
+	} else {
+		log.Printf("Samplestore disabled")
+	}
+
+	// =========================================================================
+	// Apply Configuration (namespaces, targets, pollers)
+	// =========================================================================
+
 	if len(cfg.Namespaces) > 0 {
 		result, err := loader.Apply(cfg, mgr)
 		if err != nil {
@@ -141,7 +174,11 @@ func main() {
 		defer watcher.Stop()
 	}
 
-	// Convert tokens
+	// =========================================================================
+	// Create and Start Server
+	// =========================================================================
+
+	// Convert tokens to handler format
 	tokens := make([]handler.TokenConfig, len(cfg.Auth.Tokens))
 	for i, t := range cfg.Auth.Tokens {
 		tokens[i] = handler.TokenConfig{
@@ -153,29 +190,58 @@ func main() {
 
 	// Create server
 	srv := server.New(&server.Config{
-		Manager:           mgr,
-		Listen:            cfg.Listen,
-		TLSCertFile:       cfg.TLS.CertFile,
-		TLSKeyFile:        cfg.TLS.KeyFile,
-		Tokens:            tokens,
-		AuthTimeoutSec:    cfg.Session.AuthTimeoutSec,
+		Manager:            mgr,
+		Samplestore:        sampleStore, // Pass samplestore to server
+		Listen:             cfg.Listen,
+		TLSCertFile:        cfg.TLS.CertFile,
+		TLSKeyFile:         cfg.TLS.KeyFile,
+		Tokens:             tokens,
+		AuthTimeoutSec:     cfg.Session.AuthTimeoutSec,
 		ReconnectWindowSec: cfg.Session.ReconnectWindowSec,
-		PollerWorkers:     cfg.Poller.Workers,
-		PollerQueueSize:   cfg.Poller.QueueSize,
+		PollerWorkers:      cfg.Poller.Workers,
+		PollerQueueSize:    cfg.Poller.QueueSize,
 	})
 
-	// Handle signals
+	// =========================================================================
+	// Signal Handling and Graceful Shutdown
+	// =========================================================================
+
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sig
 		log.Println("Shutting down...")
+
+		// Stop server first (stop accepting new work)
 		srv.Shutdown()
+
+		// Stop samplestore (flush buffers)
+		if sampleStore != nil {
+			log.Println("Stopping samplestore...")
+			if err := sampleStore.Stop(); err != nil {
+				log.Printf("Warning: samplestore stop: %v", err)
+			}
+		}
+
+		// Stop manager last (close metastore)
 		mgr.Stop()
 	}()
 
+	// =========================================================================
 	// Run
+	// =========================================================================
+
 	log.Printf("Listening on %s", cfg.Listen)
+	if cfg.TLS.CertFile != "" {
+		log.Printf("TLS enabled (cert=%s)", cfg.TLS.CertFile)
+	}
+	if sampleStore != nil {
+		log.Printf("Samplestore enabled (retention: raw=%s, 5min=%s, hourly=%s)",
+			cfg.Samplestore.Retention.Raw.Duration(),
+			cfg.Samplestore.Retention.FiveMin.Duration(),
+			cfg.Samplestore.Retention.Hourly.Duration())
+	}
+
 	if err := srv.Run(); err != nil {
 		log.Fatalf("Server error: %v", err)
 	}

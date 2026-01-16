@@ -16,6 +16,7 @@ import (
 	"github.com/xtxerr/stalker/internal/logging"
 	"github.com/xtxerr/stalker/internal/manager"
 	"github.com/xtxerr/stalker/internal/scheduler"
+	storageTypes "github.com/xtxerr/stalker/internal/storage/types"
 	"github.com/xtxerr/stalker/internal/wire"
 )
 
@@ -161,6 +162,10 @@ type Config struct {
 	// Manager is the entity manager (required).
 	Manager *manager.Manager
 
+	// Samplestore is the time-series storage service (optional).
+	// If nil, samples are only kept in the ring buffer.
+	Samplestore SamplestoreInterface
+
 	// Listen is the address to listen on (e.g., "0.0.0.0:9161").
 	Listen string
 
@@ -180,17 +185,27 @@ type Config struct {
 	PollerQueueSize int
 }
 
+// SamplestoreInterface defines the interface for sample ingestion.
+// This allows the server to work with or without the samplestore.
+type SamplestoreInterface interface {
+	// Ingest ingests samples into the storage system.
+	Ingest(samples []storageTypes.Sample) error
+	// IsRunning returns whether the service is running.
+	IsRunning() bool
+}
+
 // =============================================================================
 // Server
 // =============================================================================
 
 // Server is the main SNMP proxy server.
 type Server struct {
-	cfg       *Config
-	mgr       *manager.Manager
-	sessions  *handler.SessionManager
-	scheduler *scheduler.Scheduler
-	listener  net.Listener
+	cfg         *Config
+	mgr         *manager.Manager
+	samplestore SamplestoreInterface
+	sessions    *handler.SessionManager
+	scheduler   *scheduler.Scheduler
+	listener    net.Listener
 
 	authRateLimiter *RateLimiter
 
@@ -225,11 +240,12 @@ func New(cfg *Config) *Server {
 	})
 
 	return &Server{
-		cfg:       cfg,
-		mgr:       cfg.Manager,
-		sessions:  sessions,
-		scheduler: sched,
-		shutdown:  make(chan struct{}),
+		cfg:         cfg,
+		mgr:         cfg.Manager,
+		samplestore: cfg.Samplestore,
+		sessions:    sessions,
+		scheduler:   sched,
+		shutdown:    make(chan struct{}),
 		authRateLimiter: NewRateLimiter(
 			config.DefaultAuthRateLimitPerMinute,
 			time.Minute,
@@ -455,7 +471,39 @@ func (s *Server) processResults() {
 }
 
 func (s *Server) handlePollResult(result scheduler.PollResult) {
-	// Placeholder - actual implementation would record result
+	// Convert scheduler result to storage sample
+	sample := storageTypes.Sample{
+		Namespace:   result.Key.Namespace,
+		Target:      result.Key.Target,
+		Poller:      result.Key.Poller,
+		TimestampMs: result.TimestampMs,
+		Valid:       result.Success,
+		Error:       result.Error,
+		PollMs:      int32(result.PollMs),
+	}
+
+	// Set value based on result type
+	if result.Counter != nil {
+		// For counters, we'd calculate the rate here
+		// For now, just store the raw counter value
+		sample.Value = float64(*result.Counter)
+	} else if result.Gauge != nil {
+		sample.Value = float64(*result.Gauge)
+	} else if result.Float != nil {
+		sample.Value = *result.Float
+	}
+
+	// Send to samplestore if available
+	if s.samplestore != nil && s.samplestore.IsRunning() {
+		if err := s.samplestore.Ingest([]storageTypes.Sample{sample}); err != nil {
+			log.Warn("failed to ingest sample",
+				"key", result.Key.String(),
+				"error", err)
+		}
+	}
+
+	// Also update metastore state/stats (existing behavior)
+	// TODO: Batch these updates for efficiency
 }
 
 func (s *Server) cleanupLoop() {

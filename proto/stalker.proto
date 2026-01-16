@@ -904,3 +904,104 @@ message ExportRequest {
 message ExportResponse {
   bytes content = 1;             // YAML content
 }
+
+// ============================================================================
+// Storage - Time Series Data
+// ============================================================================
+
+// SampleBatch is a batch of samples for efficient transmission.
+message SampleBatch {
+  repeated Sample samples = 1;
+  int64 received_at_ms = 2;      // When the batch was received
+}
+
+// AggregateResult represents aggregated metrics over a time bucket.
+message AggregateResult {
+  string namespace = 1;
+  string target = 2;
+  string poller = 3;
+  int64 bucket_start_ms = 4;     // Bucket start timestamp (Unix ms)
+  int64 bucket_end_ms = 5;       // Bucket end timestamp (Unix ms)
+  
+  // Statistics
+  int64 count = 10;
+  double sum = 11;
+  double min = 12;
+  double max = 13;
+  double avg = 14;
+  
+  // Percentiles (optional, may be null)
+  optional double p50 = 20;
+  optional double p90 = 21;
+  optional double p95 = 22;
+  optional double p99 = 23;
+  
+  // Timestamps of first and last samples
+  int64 first_ts_ms = 30;
+  int64 last_ts_ms = 31;
+}
+
+// AggregateBatch is a batch of aggregates.
+message AggregateBatch {
+  repeated AggregateResult aggregates = 1;
+  StorageTier tier = 2;
+}
+
+// StorageTier defines the aggregation tier.
+enum StorageTier {
+  STORAGE_TIER_RAW = 0;
+  STORAGE_TIER_5MIN = 1;
+  STORAGE_TIER_HOURLY = 2;
+  STORAGE_TIER_DAILY = 3;
+  STORAGE_TIER_WEEKLY = 4;
+}
+
+// StorageQueryRequest queries storage for historical data.
+message StorageQueryRequest {
+  string namespace = 1;
+  string target = 2;
+  string poller = 3;             // Empty = all pollers for target
+  int64 start_ms = 4;
+  int64 end_ms = 5;
+  int32 limit = 6;               // Max results (0 = default)
+  StorageTier preferred_tier = 7; // Hint for tier selection
+}
+
+// StorageQueryResponse returns aggregated data.
+message StorageQueryResponse {
+  repeated AggregateResult results = 1;
+  StorageTier tier_used = 2;     // Which tier was actually queried
+  bool has_more = 3;
+  string cursor = 4;
+}
+
+// StorageStats provides storage system statistics.
+message StorageStats {
+  bool running = 1;
+  int64 uptime_ms = 2;
+  
+  // Ingestion stats
+  int64 samples_received = 10;
+  int64 samples_ingested = 11;
+  int64 samples_dropped = 12;
+  int64 batches_processed = 13;
+  
+  // Storage stats
+  int64 aggregates_written = 20;
+  int64 flushes_completed = 21;
+  
+  // Buffer stats
+  double buffer_usage_ratio = 30;
+  int32 buffer_count = 31;
+  
+  // Backpressure
+  BackpressureLevel backpressure_level = 40;
+}
+
+// BackpressureLevel indicates current system load.
+enum BackpressureLevel {
+  BACKPRESSURE_NORMAL = 0;
+  BACKPRESSURE_WARNING = 1;
+  BACKPRESSURE_CRITICAL = 2;
+  BACKPRESSURE_EMERGENCY = 3;
+}
