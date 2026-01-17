@@ -99,7 +99,7 @@ func (h *PollerHandler) GetPoller(ctx *RequestContext, req *GetPollerRequest) (*
 
 	info, err := h.mgr.GetPollerFullInfo(namespace, req.Target, req.Name)
 	if err != nil {
-		return nil, Errorf(ErrNotFound, err.Error())
+		return nil, ErrNotFound("poller", req.Target+"/"+req.Name)
 	}
 
 	return &GetPollerResponse{PollerFullInfo: info}, nil
@@ -136,10 +136,10 @@ func (h *PollerHandler) CreatePoller(ctx *RequestContext, req *CreatePollerReque
 	// Verify target exists
 	target, err := h.mgr.Targets.Get(namespace, req.Target)
 	if err != nil {
-		return nil, Errorf(ErrInternal, "get target: %v", err)
+		return nil, ErrInternalf("get target: %v", err)
 	}
 	if target == nil {
-		return nil, Errorf(ErrNotFound, "target not found: %s", req.Target)
+		return nil, ErrNotFound("target", req.Target)
 	}
 
 	adminState := req.AdminState
@@ -159,7 +159,7 @@ func (h *PollerHandler) CreatePoller(ctx *RequestContext, req *CreatePollerReque
 	}
 
 	if err := h.mgr.Pollers.Create(poller); err != nil {
-		return nil, Errorf(ErrInvalidRequest, err.Error())
+		return nil, ErrInvalidRequest(err.Error())
 	}
 
 	return &CreatePollerResponse{Poller: poller}, nil
@@ -193,10 +193,10 @@ func (h *PollerHandler) UpdatePoller(ctx *RequestContext, req *UpdatePollerReque
 
 	poller, err := h.mgr.Pollers.Get(namespace, req.Target, req.Name)
 	if err != nil {
-		return nil, Errorf(ErrInternal, "get poller: %v", err)
+		return nil, ErrInternalf("get poller: %v", err)
 	}
 	if poller == nil {
-		return nil, Errorf(ErrNotFound, "poller not found: %s/%s", req.Target, req.Name)
+		return nil, ErrNotFound("poller", req.Target+"/"+req.Name)
 	}
 
 	// Apply updates
@@ -212,9 +212,9 @@ func (h *PollerHandler) UpdatePoller(ctx *RequestContext, req *UpdatePollerReque
 
 	if err := h.mgr.Pollers.Update(poller); err != nil {
 		if err == store.ErrConcurrentModification {
-			return nil, Errorf(ErrConcurrentMod, "poller was modified by another client")
+			return nil, ErrConcurrentMod
 		}
-		return nil, Errorf(ErrInternal, "update poller: %v", err)
+		return nil, ErrInternalf("update poller: %v", err)
 	}
 
 	return &UpdatePollerResponse{Poller: poller}, nil
@@ -246,12 +246,12 @@ func (h *PollerHandler) DeletePoller(ctx *RequestContext, req *DeletePollerReque
 	// Check if poller is running
 	state := h.mgr.States.Get(namespace, req.Target, req.Name)
 	if state.IsRunning() {
-		return nil, Errorf(ErrInvalidRequest, "cannot delete running poller, disable it first")
+		return nil, ErrInvalidRequest("cannot delete running poller, disable it first")
 	}
 
 	links, err := h.mgr.Pollers.Delete(namespace, req.Target, req.Name)
 	if err != nil {
-		return nil, Errorf(ErrInvalidRequest, err.Error())
+		return nil, ErrInvalidRequest(err.Error())
 	}
 
 	return &DeletePollerResponse{LinksDeleted: links}, nil
@@ -283,7 +283,7 @@ func (h *PollerHandler) EnablePoller(ctx *RequestContext, req *EnablePollerReque
 	namespace := ctx.MustNamespace()
 
 	if err := h.mgr.Pollers.Enable(namespace, req.Target, req.Name); err != nil {
-		return nil, Errorf(ErrInvalidRequest, err.Error())
+		return nil, ErrInvalidRequest(err.Error())
 	}
 
 	state := h.mgr.States.Get(namespace, req.Target, req.Name)
@@ -318,7 +318,7 @@ func (h *PollerHandler) DisablePoller(ctx *RequestContext, req *DisablePollerReq
 	namespace := ctx.MustNamespace()
 
 	if err := h.mgr.Pollers.Disable(namespace, req.Target, req.Name); err != nil {
-		return nil, Errorf(ErrInvalidRequest, err.Error())
+		return nil, ErrInvalidRequest(err.Error())
 	}
 
 	state := h.mgr.States.Get(namespace, req.Target, req.Name)
@@ -364,7 +364,7 @@ func (h *PollerHandler) GetHistory(ctx *RequestContext, req *GetHistoryRequest) 
 
 	samples, err := h.mgr.Store().GetSamples(namespace, req.Target, req.Poller, limit, req.SinceMs, req.UntilMs)
 	if err != nil {
-		return nil, Errorf(ErrInternal, "get samples: %v", err)
+		return nil, ErrInternalf("get samples: %v", err)
 	}
 
 	return &GetHistoryResponse{Samples: samples}, nil
@@ -395,7 +395,7 @@ func (h *PollerHandler) GetResolvedConfig(ctx *RequestContext, req *GetResolvedC
 
 	config, err := h.mgr.ConfigResolver.Resolve(namespace, req.Target, req.Poller)
 	if err != nil {
-		return nil, Errorf(ErrInternal, "resolve config: %v", err)
+		return nil, ErrInternalf("resolve config: %v", err)
 	}
 
 	return &GetResolvedConfigResponse{Config: config}, nil

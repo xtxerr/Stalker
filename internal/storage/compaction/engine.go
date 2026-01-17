@@ -353,13 +353,13 @@ func (e *Engine) runJob(job Job) error {
 
 // readAggregates reads aggregates from a Parquet file.
 func (e *Engine) readAggregates(path string) ([]types.AggregateResult, error) {
-	reader, err := parquet.NewReader(path)
+	reader, err := parquet.NewAggregateReader(path)
 	if err != nil {
 		return nil, err
 	}
 	defer reader.Close()
 
-	return reader.ReadAllAggregates()
+	return reader.ReadAll()
 }
 
 // writeAggregates writes aggregates to a Parquet file.
@@ -371,13 +371,13 @@ func (e *Engine) writeAggregates(path string, aggregates []types.AggregateResult
 	}
 
 	opts := parquet.DefaultOptions()
-	writer, err := parquet.NewWriter(path, opts)
+	writer, err := parquet.NewAggregateWriter(path, opts)
 	if err != nil {
 		return err
 	}
 	defer writer.Close()
 
-	return writer.WriteAggregates(aggregates)
+	return writer.Write(aggregates)
 }
 
 // reAggregate re-aggregates data to a coarser resolution.

@@ -9,6 +9,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -45,6 +46,13 @@ func (s *Store) InsertSample(sample *Sample) error {
 // SQLite/DuckDB haben Limits, wir bleiben konservativ.
 // 10 Spalten * 100 Rows = 1000 Parameter pro Statement
 const maxSamplesPerInsert = 100
+
+// InsertSamplesBatchContext inserts multiple samples with context support.
+func (s *Store) InsertSamplesBatchContext(ctx context.Context, samples []*Sample) error {
+	// For now, delegate to non-context version
+	// TODO: Add proper context cancellation support
+	return s.InsertSamplesBatch(samples)
+}
 
 // InsertSamplesBatch inserts multiple samples efficiently using multi-row INSERT.
 // OPTIMIZED: Uses multi-row VALUES instead of individual prepared statements.

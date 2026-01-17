@@ -176,11 +176,11 @@ type ServerInfo struct {
 
 // RecordPollResult records a poll result for a poller.
 func (m *Manager) RecordPollResult(namespace, target, poller string, success bool, timeout bool, pollErr string, pollMs int, sample *store.Sample) {
-	// Update state
+	// Update state (tracks health, consecutive failures, timestamps)
 	state := m.States.Get(namespace, target, poller)
-	state.RecordPollResult(success, pollErr, pollMs)
+	state.RecordPollResult(success, pollErr)
 
-	// Update stats
+	// Update stats (tracks counters and timing)
 	stats := m.Stats.Get(namespace, target, poller)
 	stats.RecordPoll(success, timeout, pollMs)
 

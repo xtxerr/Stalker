@@ -286,14 +286,14 @@ func (s *Service) writeAggregates(aggregates []types.AggregateResult) error {
 	opts := parquet.DefaultOptions()
 	opts.Compression = parquet.CompressionType(s.config.Features.Compression.Level)
 
-	writer, err := parquet.NewWriter(path, opts)
+	writer, err := parquet.NewAggregateWriter(path, opts)
 	if err != nil {
 		return fmt.Errorf("create parquet writer: %w", err)
 	}
 	defer writer.Close()
 
 	// Write aggregates
-	if err := writer.WriteAggregates(aggregates); err != nil {
+	if err := writer.Write(aggregates); err != nil {
 		return fmt.Errorf("write aggregates: %w", err)
 	}
 

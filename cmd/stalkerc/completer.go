@@ -167,7 +167,7 @@ func (c *Completer) completePath(partial string) []prompt.Suggest {
 	var suggestions []prompt.Suggest
 	for _, node := range resp.Nodes {
 		name := node.Name
-		if node.Type == pb.NodeType_NODE_DIRECTORY {
+		if node.Type == pb.BrowseNodeType_BROWSE_NODE_DIRECTORY {
 			name += "/"
 		}
 		
@@ -469,7 +469,7 @@ func (c *Completer) getTargetSuggestions(prefix string) []prompt.Suggest {
 
 	var suggestions []prompt.Suggest
 	for _, node := range resp.Nodes {
-		if node.Type != pb.NodeType_NODE_TARGET {
+		if node.Type != pb.BrowseNodeType_BROWSE_NODE_TARGET {
 			continue
 		}
 		suggestions = append(suggestions, prompt.Suggest{
@@ -522,13 +522,13 @@ func (c *Completer) getTagSuggestions(prefix string) []prompt.Suggest {
 	}
 
 	for _, node := range resp.Nodes {
-		if node.Type != pb.NodeType_NODE_DIRECTORY {
+		if node.Type != pb.BrowseNodeType_BROWSE_NODE_DIRECTORY {
 			continue
 		}
 		fullTag := basePath + node.Name
 		desc := ""
-		if node.TargetCount > 0 {
-			desc = fmt.Sprintf("%d targets", node.TargetCount)
+		if node.ChildCount > 0 {
+			desc = fmt.Sprintf("%d children", node.ChildCount)
 		}
 		suggestions = append(suggestions, prompt.Suggest{
 			Text:        fullTag,

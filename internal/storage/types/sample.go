@@ -2,6 +2,33 @@ package types
 
 import "time"
 
+// ValueType indicates the type of metric value.
+type ValueType int
+
+const (
+	// ValueTypeGauge is a point-in-time measurement (e.g., temperature, CPU usage).
+	ValueTypeGauge ValueType = iota
+	// ValueTypeCounter is a monotonically increasing counter (e.g., bytes received).
+	// The Value field contains the calculated rate (delta / time).
+	ValueTypeCounter
+	// ValueTypeText is a string value (e.g., firmware version, status).
+	ValueTypeText
+)
+
+// String returns a human-readable representation of the ValueType.
+func (v ValueType) String() string {
+	switch v {
+	case ValueTypeGauge:
+		return "gauge"
+	case ValueTypeCounter:
+		return "counter"
+	case ValueTypeText:
+		return "text"
+	default:
+		return "unknown"
+	}
+}
+
 // Sample represents a single measurement from a poller.
 // This is the primary data unit flowing through the storage system.
 type Sample struct {
@@ -13,8 +40,14 @@ type Sample struct {
 	// Timestamp
 	TimestampMs int64 // Unix timestamp in milliseconds
 
+	// Value type indicator
+	ValueType ValueType
+
 	// Value - for counter metrics, this should be the calculated rate
 	Value float64
+
+	// TextValue holds the value for ValueTypeText samples
+	TextValue string
 
 	// Validity
 	Valid bool   // True if the sample is valid

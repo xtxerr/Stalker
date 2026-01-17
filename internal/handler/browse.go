@@ -78,7 +78,7 @@ func (h *BrowseHandler) Browse(ctx *RequestContext, req *BrowseRequest) (*Browse
 		if len(parts) == 2 {
 			return h.browsePoller(ctx, namespace, parts[0], parts[1])
 		}
-		return nil, Errorf(ErrNotFound, "invalid path: %s", path)
+		return nil, ErrNotFound("path", path)
 
 	case path == "/tree":
 		return h.browseTree(ctx, namespace, "/")
@@ -88,7 +88,7 @@ func (h *BrowseHandler) Browse(ctx *RequestContext, req *BrowseRequest) (*Browse
 		return h.browseTree(ctx, namespace, treePath)
 
 	default:
-		return nil, Errorf(ErrNotFound, "invalid path: %s", path)
+		return nil, ErrNotFound("path", path)
 	}
 }
 
@@ -130,10 +130,10 @@ func (h *BrowseHandler) browseTargets(ctx *RequestContext, namespace string) (*B
 func (h *BrowseHandler) browseTarget(ctx *RequestContext, namespace, targetName string) (*BrowseResponse, error) {
 	target, err := h.mgr.Targets.Get(namespace, targetName)
 	if err != nil {
-		return nil, Errorf(ErrInternal, "get target: %v", err)
+		return nil, ErrInternalf("get target: %v", err)
 	}
 	if target == nil {
-		return nil, Errorf(ErrNotFound, "target not found: %s", targetName)
+		return nil, ErrNotFound("target", targetName)
 	}
 
 	pollers := h.mgr.Pollers.List(namespace, targetName)
@@ -165,7 +165,7 @@ func (h *BrowseHandler) browseTarget(ctx *RequestContext, namespace, targetName 
 func (h *BrowseHandler) browsePoller(ctx *RequestContext, namespace, targetName, pollerName string) (*BrowseResponse, error) {
 	info, err := h.mgr.GetPollerFullInfo(namespace, targetName, pollerName)
 	if err != nil {
-		return nil, Errorf(ErrNotFound, err.Error())
+		return nil, ErrNotFound("poller", pollerName)
 	}
 
 	entry := &BrowseEntry{
@@ -189,7 +189,7 @@ func (h *BrowseHandler) browsePoller(ctx *RequestContext, namespace, targetName,
 func (h *BrowseHandler) browseTree(ctx *RequestContext, namespace, treePath string) (*BrowseResponse, error) {
 	results, err := h.mgr.Tree.Browse(namespace, treePath, true, h.mgr.Targets, h.mgr.Pollers)
 	if err != nil {
-		return nil, Errorf(ErrInternal, "browse tree: %v", err)
+		return nil, ErrInternalf("browse tree: %v", err)
 	}
 
 	var entries []*BrowseEntry
@@ -255,7 +255,7 @@ func (h *BrowseHandler) CreateDirectory(ctx *RequestContext, req *CreateDirector
 	path := normalizePath(req.Path)
 
 	if err := h.mgr.Tree.CreateDirectory(namespace, path, req.Description); err != nil {
-		return nil, Errorf(ErrInvalidRequest, err.Error())
+		return nil, ErrInvalidRequest(err.Error())
 	}
 
 	return &CreateDirectoryResponse{Path: path}, nil
@@ -284,7 +284,7 @@ func (h *BrowseHandler) CreateLink(ctx *RequestContext, req *CreateLinkRequest) 
 	path := normalizePath(req.Path)
 
 	if err := h.mgr.Tree.CreateLink(namespace, path, req.LinkName, req.LinkType, req.LinkRef); err != nil {
-		return nil, Errorf(ErrInvalidRequest, err.Error())
+		return nil, ErrInvalidRequest(err.Error())
 	}
 
 	fullPath := path + "/" + req.LinkName
@@ -314,7 +314,7 @@ func (h *BrowseHandler) DeleteTreeNode(ctx *RequestContext, req *DeleteTreeNodeR
 
 	deleted, err := h.mgr.Tree.Delete(namespace, path, req.Recursive, req.Force)
 	if err != nil {
-		return nil, Errorf(ErrInvalidRequest, err.Error())
+		return nil, ErrInvalidRequest(err.Error())
 	}
 
 	return &DeleteTreeNodeResponse{Deleted: deleted}, nil
@@ -397,7 +397,7 @@ func (h *BrowseHandler) ResolvePath(ctx *RequestContext, req *ResolvePathRequest
 		treePath := strings.TrimPrefix(path, "/tree")
 		nodeType, linkRef, err := h.mgr.Tree.ResolvePath(namespace, treePath)
 		if err != nil {
-			return nil, Errorf(ErrNotFound, err.Error())
+			return nil, ErrNotFound("path", treePath)
 		}
 
 		switch nodeType {
@@ -427,5 +427,5 @@ func (h *BrowseHandler) ResolvePath(ctx *RequestContext, req *ResolvePathRequest
 		}
 	}
 
-	return nil, Errorf(ErrNotFound, "cannot resolve path: %s", path)
+	return nil, ErrNotFound("path", path)
 }

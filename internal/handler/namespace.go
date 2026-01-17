@@ -33,10 +33,10 @@ func (h *NamespaceHandler) BindNamespace(ctx *RequestContext, req *BindNamespace
 	// Check if namespace exists
 	ns, err := h.mgr.Namespaces.Get(req.Namespace)
 	if err != nil {
-		return nil, Errorf(ErrInternal, "get namespace: %v", err)
+		return nil, ErrInternalf("get namespace: %v", err)
 	}
 	if ns == nil {
-		return nil, Errorf(ErrNotFound, "namespace not found: %s", req.Namespace)
+		return nil, ErrNotFound("namespace", req.Namespace)
 	}
 
 	// Check access
@@ -45,9 +45,7 @@ func (h *NamespaceHandler) BindNamespace(ctx *RequestContext, req *BindNamespace
 	}
 
 	// Bind session
-	if err := ctx.Session.BindNamespace(req.Namespace); err != nil {
-		return nil, Errorf(ErrInvalidRequest, err.Error())
-	}
+	ctx.Session.BindNamespace(req.Namespace)
 
 	return &BindNamespaceResponse{Namespace: req.Namespace}, nil
 }
@@ -121,10 +119,10 @@ func (h *NamespaceHandler) GetNamespace(ctx *RequestContext, req *GetNamespaceRe
 
 	ns, err := h.mgr.Namespaces.Get(req.Name)
 	if err != nil {
-		return nil, Errorf(ErrInternal, "get namespace: %v", err)
+		return nil, ErrInternalf("get namespace: %v", err)
 	}
 	if ns == nil {
-		return nil, Errorf(ErrNotFound, "namespace not found: %s", req.Name)
+		return nil, ErrNotFound("namespace", req.Name)
 	}
 
 	stats, _ := h.mgr.Namespaces.GetStats(req.Name)
@@ -161,9 +159,9 @@ func (h *NamespaceHandler) CreateNamespace(ctx *RequestContext, req *CreateNames
 
 	if err := h.mgr.Namespaces.Create(ns); err != nil {
 		if err.Error() == "namespace already exists: "+req.Name {
-			return nil, Errorf(ErrAlreadyExists, err.Error())
+			return nil, ErrAlreadyExists("namespace", req.Name)
 		}
-		return nil, Errorf(ErrInvalidRequest, err.Error())
+		return nil, ErrInvalidRequest(err.Error())
 	}
 
 	return &CreateNamespaceResponse{Namespace: ns}, nil
@@ -194,10 +192,10 @@ func (h *NamespaceHandler) UpdateNamespace(ctx *RequestContext, req *UpdateNames
 
 	ns, err := h.mgr.Namespaces.Get(req.Name)
 	if err != nil {
-		return nil, Errorf(ErrInternal, "get namespace: %v", err)
+		return nil, ErrInternalf("get namespace: %v", err)
 	}
 	if ns == nil {
-		return nil, Errorf(ErrNotFound, "namespace not found: %s", req.Name)
+		return nil, ErrNotFound("namespace", req.Name)
 	}
 
 	// Apply updates
@@ -210,9 +208,9 @@ func (h *NamespaceHandler) UpdateNamespace(ctx *RequestContext, req *UpdateNames
 
 	if err := h.mgr.Namespaces.Update(ns); err != nil {
 		if err == store.ErrConcurrentModification {
-			return nil, Errorf(ErrConcurrentMod, "namespace was modified by another client")
+			return nil, ErrConcurrentMod
 		}
-		return nil, Errorf(ErrInternal, "update namespace: %v", err)
+		return nil, ErrInternalf("update namespace: %v", err)
 	}
 
 	return &UpdateNamespaceResponse{Namespace: ns}, nil
@@ -244,9 +242,9 @@ func (h *NamespaceHandler) DeleteNamespace(ctx *RequestContext, req *DeleteNames
 	targets, pollers, err := h.mgr.Namespaces.Delete(req.Name, req.Force)
 	if err != nil {
 		if err.Error() == "namespace not found: "+req.Name {
-			return nil, Errorf(ErrNotFound, err.Error())
+			return nil, ErrNotFound("namespace", req.Name)
 		}
-		return nil, Errorf(ErrInvalidRequest, err.Error())
+		return nil, ErrInvalidRequest(err.Error())
 	}
 
 	return &DeleteNamespaceResponse{

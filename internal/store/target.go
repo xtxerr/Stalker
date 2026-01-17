@@ -41,6 +41,12 @@ type TargetConfig struct {
 	Defaults *PollerDefaults `json:"defaults,omitempty"`
 }
 
+// TargetStats holds statistics for a target.
+type TargetStats struct {
+	PollerCount  int
+	EnabledCount int
+}
+
 // PollerDefaults holds default settings inherited by pollers.
 type PollerDefaults struct {
 	// SNMPv2c
@@ -259,10 +265,50 @@ func (s *Store) UpdateTarget(t *Target) error {
 	return nil
 }
 
-// DeleteTarget deletes a target.
-func (s *Store) DeleteTarget(namespace, name string) error {
-	_, err := s.db.Exec(`DELETE FROM targets WHERE namespace = ? AND name = ?`, namespace, name)
-	return err
+// DeleteTarget deletes a target and optionally its pollers.
+// Returns the number of pollers and tree links deleted.
+func (s *Store) DeleteTarget(namespace, name string, force bool) (pollersDeleted, linksDeleted int, err error) {
+	if force {
+		// Count pollers first
+		err = s.db.QueryRow(`SELECT COUNT(*) FROM pollers WHERE namespace = ? AND target = ?`, namespace, name).Scan(&pollersDeleted)
+		if err != nil {
+			return 0, 0, fmt.Errorf("count pollers: %w", err)
+		}
+
+		// Count tree links
+		err = s.db.QueryRow(`SELECT COUNT(*) FROM tree_nodes WHERE namespace = ? AND target_ref = ?`, namespace, name).Scan(&linksDeleted)
+		if err != nil {
+			// Tree nodes table might not exist, ignore error
+			linksDeleted = 0
+		}
+
+		// Delete pollers
+		_, err = s.db.Exec(`DELETE FROM pollers WHERE namespace = ? AND target = ?`, namespace, name)
+		if err != nil {
+			return 0, 0, fmt.Errorf("delete pollers: %w", err)
+		}
+
+		// Delete tree links (ignore errors if table doesn't exist)
+		s.db.Exec(`DELETE FROM tree_nodes WHERE namespace = ? AND target_ref = ?`, namespace, name)
+	} else {
+		// Check if target has pollers
+		var count int
+		err = s.db.QueryRow(`SELECT COUNT(*) FROM pollers WHERE namespace = ? AND target = ?`, namespace, name).Scan(&count)
+		if err != nil {
+			return 0, 0, fmt.Errorf("check pollers: %w", err)
+		}
+		if count > 0 {
+			return 0, 0, fmt.Errorf("target has %d pollers, use force=true to delete", count)
+		}
+	}
+
+	// Delete target
+	_, err = s.db.Exec(`DELETE FROM targets WHERE namespace = ? AND name = ?`, namespace, name)
+	if err != nil {
+		return 0, 0, fmt.Errorf("delete target: %w", err)
+	}
+
+	return pollersDeleted, linksDeleted, nil
 }
 
 // TargetExists checks if a target exists.
@@ -275,6 +321,95 @@ func (s *Store) TargetExists(namespace, name string) (bool, error) {
 		return false, err
 	}
 	return count > 0, nil
+}
+
+// ListTargetsFiltered returns targets matching filters with pagination.
+func (s *Store) ListTargetsFiltered(namespace string, labels map[string]string, limit int, cursor string) ([]*Target, string, error) {
+	// For now, simple implementation without label filtering
+	// TODO: Implement proper label filtering with JSON queries
+	query := `
+		SELECT name, description, config, source, content_hash, synced_at,
+		       created_at, updated_at, version
+		FROM targets WHERE namespace = ?`
+	args := []interface{}{namespace}
+
+	if cursor != "" {
+		query += ` AND name > ?`
+		args = append(args, cursor)
+	}
+
+	query += ` ORDER BY name LIMIT ?`
+	args = append(args, limit+1) // Fetch one extra to determine if there's more
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, "", fmt.Errorf("query targets: %w", err)
+	}
+	defer rows.Close()
+
+	var targets []*Target
+	for rows.Next() {
+		t := &Target{Namespace: namespace}
+		var configJSON sql.NullString
+		var source sql.NullString
+		var contentHash sql.NullInt64
+		var syncedAt sql.NullTime
+
+		if err := rows.Scan(
+			&t.Name, &t.Description, &configJSON, &source, &contentHash, &syncedAt,
+			&t.CreatedAt, &t.UpdatedAt, &t.Version,
+		); err != nil {
+			return nil, "", fmt.Errorf("scan target: %w", err)
+		}
+
+		if configJSON.Valid && configJSON.String != "" {
+			t.Config = &TargetConfig{}
+			json.Unmarshal([]byte(configJSON.String), t.Config)
+		}
+		if source.Valid {
+			t.Source = source.String
+		}
+		if contentHash.Valid {
+			t.ContentHash = uint64(contentHash.Int64)
+		}
+		if syncedAt.Valid {
+			t.SyncedAt = &syncedAt.Time
+		}
+
+		targets = append(targets, t)
+	}
+
+	// Check for next cursor
+	var nextCursor string
+	if len(targets) > limit {
+		nextCursor = targets[limit-1].Name
+		targets = targets[:limit]
+	}
+
+	return targets, nextCursor, rows.Err()
+}
+
+// GetTargetStats returns statistics for a target.
+func (s *Store) GetTargetStats(namespace, name string) (*TargetStats, error) {
+	stats := &TargetStats{}
+
+	// Count pollers
+	err := s.db.QueryRow(`
+		SELECT COUNT(*) FROM pollers WHERE namespace = ? AND target = ?
+	`, namespace, name).Scan(&stats.PollerCount)
+	if err != nil {
+		return nil, fmt.Errorf("count pollers: %w", err)
+	}
+
+	// Count enabled pollers
+	err = s.db.QueryRow(`
+		SELECT COUNT(*) FROM pollers WHERE namespace = ? AND target = ? AND admin_state = 'enabled'
+	`, namespace, name).Scan(&stats.EnabledCount)
+	if err != nil {
+		return nil, fmt.Errorf("count enabled pollers: %w", err)
+	}
+
+	return stats, nil
 }
 
 // =============================================================================

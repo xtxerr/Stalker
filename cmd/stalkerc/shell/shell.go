@@ -104,14 +104,15 @@ func (s *Shell) livePrefix() (string, bool) {
 
 func (s *Shell) handleSample(sample *pb.Sample) {
 	ts := time.UnixMilli(sample.TimestampMs).Format("15:04:05.000")
+	targetId := sample.Target + "/" + sample.Poller
 
 	if sample.Valid {
-		if sample.Text != "" {
-			fmt.Printf("\n[%s] %s: %s\n", ts, sample.TargetId, sample.Text)
+		if sample.ValueText != "" {
+			fmt.Printf("\n[%s] %s: %s\n", ts, targetId, sample.ValueText)
 		} else {
-			fmt.Printf("\n[%s] %s: %d (%dms)\n", ts, sample.TargetId, sample.Counter, sample.PollMs)
+			fmt.Printf("\n[%s] %s: %d (%dms)\n", ts, targetId, sample.ValueCounter, sample.PollMs)
 		}
 	} else {
-		fmt.Printf("\n[%s] %s: ERROR %s\n", ts, sample.TargetId, sample.Error)
+		fmt.Printf("\n[%s] %s: ERROR %s\n", ts, targetId, sample.Error)
 	}
 }

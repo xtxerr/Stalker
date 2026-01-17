@@ -92,30 +92,55 @@ type ProtoStorageStats struct {
 
 // SampleToProto converts a storage Sample to a proto Sample.
 func SampleToProto(s types.Sample) ProtoSample {
-	return ProtoSample{
+	p := ProtoSample{
 		Namespace:   s.Namespace,
 		Target:      s.Target,
 		Poller:      s.Poller,
 		TimestampMs: s.TimestampMs,
-		ValueGauge:  s.Value,
 		Valid:       s.Valid,
 		Error:       s.Error,
 		PollMs:      s.PollMs,
 	}
+
+	// Set the appropriate value field based on type
+	switch s.ValueType {
+	case types.ValueTypeCounter:
+		p.ValueCounter = uint64(s.Value)
+	case types.ValueTypeText:
+		p.ValueText = s.TextValue
+	default: // ValueTypeGauge
+		p.ValueGauge = s.Value
+	}
+
+	return p
 }
 
 // SampleFromProto converts a proto Sample to a storage Sample.
 func SampleFromProto(p ProtoSample) types.Sample {
-	return types.Sample{
+	s := types.Sample{
 		Namespace:   p.Namespace,
 		Target:      p.Target,
 		Poller:      p.Poller,
 		TimestampMs: p.TimestampMs,
-		Value:       p.ValueGauge,
 		Valid:       p.Valid,
 		Error:       p.Error,
 		PollMs:      p.PollMs,
 	}
+
+	// Determine value type based on which proto field is set.
+	// Priority: Counter > Text > Gauge (default)
+	if p.ValueCounter != 0 {
+		s.ValueType = types.ValueTypeCounter
+		s.Value = float64(p.ValueCounter)
+	} else if p.ValueText != "" {
+		s.ValueType = types.ValueTypeText
+		s.TextValue = p.ValueText
+	} else {
+		s.ValueType = types.ValueTypeGauge
+		s.Value = p.ValueGauge
+	}
+
+	return s
 }
 
 // SamplesToProto converts a slice of storage Samples to proto Samples.

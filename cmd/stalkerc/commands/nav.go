@@ -1,3 +1,9 @@
+//go:build ignore
+// +build ignore
+
+// NOTE: This file is excluded from build until the proto schema
+// is aligned with the browse API (NodeType, Browse method, etc.)
+
 package commands
 
 import (

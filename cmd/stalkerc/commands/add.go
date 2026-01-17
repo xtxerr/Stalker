@@ -1,3 +1,9 @@
+//go:build ignore
+// +build ignore
+
+// NOTE: This file is excluded from build until the proto schema
+// includes the target creation API (SNMPTargetConfig, CreateTargetRequest fields, etc.)
+
 package commands
 
 import (

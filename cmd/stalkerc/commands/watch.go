@@ -1,3 +1,9 @@
+//go:build ignore
+// +build ignore
+
+// NOTE: This file is excluded from build until the client
+// has watch/subscribe methods.
+
 package commands
 
 import (

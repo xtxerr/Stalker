@@ -4,6 +4,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -574,6 +575,20 @@ func (s *Store) BatchUpdatePollerStats(statsList []*PollerStatsRecord) error {
 		}
 		return nil
 	})
+}
+
+// BatchUpdatePollerStatesContext updates multiple poller states with context support.
+func (s *Store) BatchUpdatePollerStatesContext(ctx context.Context, states []*PollerState) error {
+	// For now, delegate to the non-context version
+	// TODO: Add proper context cancellation support
+	return s.BatchUpdatePollerStates(states)
+}
+
+// BatchUpdatePollerStatsContext updates multiple poller stats with context support.
+func (s *Store) BatchUpdatePollerStatsContext(ctx context.Context, statsList []*PollerStatsRecord) error {
+	// For now, delegate to the non-context version
+	// TODO: Add proper context cancellation support
+	return s.BatchUpdatePollerStats(statsList)
 }
 
 // =============================================================================

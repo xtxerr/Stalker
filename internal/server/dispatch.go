@@ -1,3 +1,9 @@
+//go:build ignore
+// +build ignore
+
+// NOTE: This file is excluded from build until the server
+// message handling is connected to the handler layer.
+
 package server
 
 import (

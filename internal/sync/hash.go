@@ -2,6 +2,7 @@ package sync
 
 import (
 	"encoding/binary"
+	"hash"
 	"hash/fnv"
 	"sort"
 )
@@ -24,7 +25,7 @@ import (
 // The hash is deterministic - same inputs always produce the same output.
 // Order of operations matters.
 type HashBuilder struct {
-	h *fnv.Hash64a
+	h hash.Hash64
 }
 
 // NewHashBuilder creates a new hash builder.

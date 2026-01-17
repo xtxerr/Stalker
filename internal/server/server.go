@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/xtxerr/stalker/config"
+	stalkerErrors "github.com/xtxerr/stalker/internal/errors"
 	"github.com/xtxerr/stalker/internal/handler"
 	"github.com/xtxerr/stalker/internal/logging"
 	"github.com/xtxerr/stalker/internal/manager"
@@ -368,10 +369,10 @@ func (s *Server) handleConn(conn net.Conn) {
 		return
 	}
 
-	auth := env.GetAuth()
+	auth := env.GetAuthReq()
 	if auth == nil {
 		s.authRateLimiter.RecordFailure(remoteIP)
-		w.Write(wire.NewError(env.Id, wire.ErrNotAuthenticated, "first message must be auth"))
+		w.Write(wire.NewError(env.Id, stalkerErrors.CodeNotAuthenticated, "first message must be auth"))
 		conn.Close()
 		return
 	}
@@ -482,15 +483,16 @@ func (s *Server) handlePollResult(result scheduler.PollResult) {
 		PollMs:      int32(result.PollMs),
 	}
 
-	// Set value based on result type
+	// Set value and type based on result
 	if result.Counter != nil {
-		// For counters, we'd calculate the rate here
-		// For now, just store the raw counter value
+		sample.ValueType = storageTypes.ValueTypeCounter
 		sample.Value = float64(*result.Counter)
+	} else if result.Text != nil {
+		sample.ValueType = storageTypes.ValueTypeText
+		sample.TextValue = *result.Text
 	} else if result.Gauge != nil {
-		sample.Value = float64(*result.Gauge)
-	} else if result.Float != nil {
-		sample.Value = *result.Float
+		sample.ValueType = storageTypes.ValueTypeGauge
+		sample.Value = *result.Gauge
 	}
 
 	// Send to samplestore if available

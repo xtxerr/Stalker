@@ -38,6 +38,13 @@ type NamespaceConfig struct {
 	SessionCleanupIntervalSec *int            `json:"session_cleanup_interval_sec,omitempty"`
 }
 
+// NamespaceStats holds statistics for a namespace.
+type NamespaceStats struct {
+	TargetCount  int
+	PollerCount  int
+	EnabledCount int
+}
+
 // =============================================================================
 // CRUD Operations
 // =============================================================================
@@ -201,10 +208,52 @@ func (s *Store) UpdateNamespace(ns *Namespace) error {
 	return nil
 }
 
-// DeleteNamespace deletes a namespace.
-func (s *Store) DeleteNamespace(name string) error {
-	_, err := s.db.Exec(`DELETE FROM namespaces WHERE name = ?`, name)
-	return err
+// DeleteNamespace deletes a namespace and optionally all its targets and pollers.
+// Returns the number of targets and pollers deleted.
+func (s *Store) DeleteNamespace(name string, force bool) (targetsDeleted, pollersDeleted int, err error) {
+	if force {
+		// Count pollers first
+		err = s.db.QueryRow(`SELECT COUNT(*) FROM pollers WHERE namespace = ?`, name).Scan(&pollersDeleted)
+		if err != nil {
+			return 0, 0, fmt.Errorf("count pollers: %w", err)
+		}
+
+		// Count targets
+		err = s.db.QueryRow(`SELECT COUNT(*) FROM targets WHERE namespace = ?`, name).Scan(&targetsDeleted)
+		if err != nil {
+			return 0, 0, fmt.Errorf("count targets: %w", err)
+		}
+
+		// Delete pollers
+		_, err = s.db.Exec(`DELETE FROM pollers WHERE namespace = ?`, name)
+		if err != nil {
+			return 0, 0, fmt.Errorf("delete pollers: %w", err)
+		}
+
+		// Delete targets
+		_, err = s.db.Exec(`DELETE FROM targets WHERE namespace = ?`, name)
+		if err != nil {
+			return 0, 0, fmt.Errorf("delete targets: %w", err)
+		}
+	} else {
+		// Check if namespace has targets
+		var count int
+		err = s.db.QueryRow(`SELECT COUNT(*) FROM targets WHERE namespace = ?`, name).Scan(&count)
+		if err != nil {
+			return 0, 0, fmt.Errorf("check targets: %w", err)
+		}
+		if count > 0 {
+			return 0, 0, fmt.Errorf("namespace has %d targets, use force=true to delete", count)
+		}
+	}
+
+	// Delete namespace
+	_, err = s.db.Exec(`DELETE FROM namespaces WHERE name = ?`, name)
+	if err != nil {
+		return 0, 0, fmt.Errorf("delete namespace: %w", err)
+	}
+
+	return targetsDeleted, pollersDeleted, nil
 }
 
 // NamespaceExists checks if a namespace exists.
@@ -215,6 +264,31 @@ func (s *Store) NamespaceExists(name string) (bool, error) {
 		return false, err
 	}
 	return count > 0, nil
+}
+
+// GetNamespaceStats returns statistics for a namespace.
+func (s *Store) GetNamespaceStats(name string) (*NamespaceStats, error) {
+	stats := &NamespaceStats{}
+
+	// Count targets
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM targets WHERE namespace = ?`, name).Scan(&stats.TargetCount)
+	if err != nil {
+		return nil, fmt.Errorf("count targets: %w", err)
+	}
+
+	// Count pollers
+	err = s.db.QueryRow(`SELECT COUNT(*) FROM pollers WHERE namespace = ?`, name).Scan(&stats.PollerCount)
+	if err != nil {
+		return nil, fmt.Errorf("count pollers: %w", err)
+	}
+
+	// Count enabled pollers
+	err = s.db.QueryRow(`SELECT COUNT(*) FROM pollers WHERE namespace = ? AND admin_state = 'enabled'`, name).Scan(&stats.EnabledCount)
+	if err != nil {
+		return nil, fmt.Errorf("count enabled pollers: %w", err)
+	}
+
+	return stats, nil
 }
 
 // =============================================================================

@@ -548,3 +548,16 @@ func (m *SyncManager) GetMetrics() SyncMetrics {
 		RetryCount:     m.retryCount.Load(),
 	}
 }
+
+// GetBufferedSampleCount returns the number of samples in the buffer and overflow.
+func (m *SyncManager) GetBufferedSampleCount() int {
+	m.sampleMu.Lock()
+	bufferCount := len(m.sampleBuffer)
+	m.sampleMu.Unlock()
+
+	m.overflowMu.Lock()
+	overflowCount := len(m.overflowBuffer)
+	m.overflowMu.Unlock()
+
+	return bufferCount + overflowCount
+}

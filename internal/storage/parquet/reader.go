@@ -22,20 +22,14 @@ func NewSampleReader(path string) (*SampleReader, error) {
 		return nil, fmt.Errorf("open file: %w", err)
 	}
 
-	stat, err := f.Stat()
-	if err != nil {
-		f.Close()
-		return nil, fmt.Errorf("stat file: %w", err)
-	}
-
-	reader := parquet.NewGenericReader[SampleRow](f, parquet.ReadBufferSize(1024*1024))
+	// Create generic reader
+	reader := parquet.NewGenericReader[SampleRow](f)
 
 	return &SampleReader{
 		file:   f,
 		reader: reader,
 		path:   path,
 	}, nil
-	_ = stat // suppress unused warning
 }
 
 // Read reads up to n samples from the file.
@@ -105,7 +99,8 @@ func NewAggregateReader(path string) (*AggregateReader, error) {
 		return nil, fmt.Errorf("open file: %w", err)
 	}
 
-	reader := parquet.NewGenericReader[AggregateRow](f, parquet.ReadBufferSize(1024*1024))
+	// Create generic reader
+	reader := parquet.NewGenericReader[AggregateRow](f)
 
 	return &AggregateReader{
 		file:   f,

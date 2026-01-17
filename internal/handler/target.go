@@ -54,7 +54,7 @@ func (h *TargetHandler) ListTargets(ctx *RequestContext, req *ListTargetsRequest
 
 		targets, nextCursor, err := h.mgr.Targets.ListFiltered(namespace, req.Labels, limit, req.Cursor)
 		if err != nil {
-			return nil, Errorf(ErrInternal, "list targets: %v", err)
+			return nil, ErrInternalf("list targets: %v", err)
 		}
 
 		var infos []*TargetInfo
@@ -117,10 +117,10 @@ func (h *TargetHandler) GetTarget(ctx *RequestContext, req *GetTargetRequest) (*
 
 	target, err := h.mgr.Targets.Get(namespace, req.Name)
 	if err != nil {
-		return nil, Errorf(ErrInternal, "get target: %v", err)
+		return nil, ErrInternalf("get target: %v", err)
 	}
 	if target == nil {
-		return nil, Errorf(ErrNotFound, "target not found: %s", req.Name)
+		return nil, ErrNotFound("target", req.Name)
 	}
 
 	stats, _ := h.mgr.Targets.GetStats(namespace, req.Name)
@@ -182,7 +182,7 @@ func (h *TargetHandler) CreateTarget(ctx *RequestContext, req *CreateTargetReque
 	}
 
 	if err := h.mgr.Targets.Create(target); err != nil {
-		return nil, Errorf(ErrInvalidRequest, err.Error())
+		return nil, ErrInvalidRequest(err.Error())
 	}
 
 	return &CreateTargetResponse{Target: target}, nil
@@ -215,10 +215,10 @@ func (h *TargetHandler) UpdateTarget(ctx *RequestContext, req *UpdateTargetReque
 
 	target, err := h.mgr.Targets.Get(namespace, req.Name)
 	if err != nil {
-		return nil, Errorf(ErrInternal, "get target: %v", err)
+		return nil, ErrInternalf("get target: %v", err)
 	}
 	if target == nil {
-		return nil, Errorf(ErrNotFound, "target not found: %s", req.Name)
+		return nil, ErrNotFound("target", req.Name)
 	}
 
 	// Apply updates
@@ -234,9 +234,9 @@ func (h *TargetHandler) UpdateTarget(ctx *RequestContext, req *UpdateTargetReque
 
 	if err := h.mgr.Targets.Update(target); err != nil {
 		if err == store.ErrConcurrentModification {
-			return nil, Errorf(ErrConcurrentMod, "target was modified by another client")
+			return nil, ErrConcurrentMod
 		}
-		return nil, Errorf(ErrInternal, "update target: %v", err)
+		return nil, ErrInternalf("update target: %v", err)
 	}
 
 	return &UpdateTargetResponse{Target: target}, nil
@@ -268,7 +268,7 @@ func (h *TargetHandler) DeleteTarget(ctx *RequestContext, req *DeleteTargetReque
 
 	pollers, links, err := h.mgr.Targets.Delete(namespace, req.Name, req.Force)
 	if err != nil {
-		return nil, Errorf(ErrInvalidRequest, err.Error())
+		return nil, ErrInvalidRequest(err.Error())
 	}
 
 	return &DeleteTargetResponse{
@@ -301,7 +301,7 @@ func (h *TargetHandler) SetLabels(ctx *RequestContext, req *SetLabelsRequest) (*
 	namespace := ctx.MustNamespace()
 
 	if err := h.mgr.Targets.SetLabels(namespace, req.Name, req.Labels); err != nil {
-		return nil, Errorf(ErrInvalidRequest, err.Error())
+		return nil, ErrInvalidRequest(err.Error())
 	}
 
 	target, _ := h.mgr.Targets.Get(namespace, req.Name)

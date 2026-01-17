@@ -552,3 +552,31 @@ func (c *Client) Request(env *pb.Envelope) (*pb.Envelope, error) {
 func (c *Client) RequestWithContext(ctx context.Context, env *pb.Envelope) (*pb.Envelope, error) {
 	return c.request(ctx, env)
 }
+
+// BrowsePath browses a path and returns the response.
+func (c *Client) BrowsePath(path string, longFormat bool) (*pb.BrowseResponse, error) {
+	env := &pb.Envelope{
+		Payload: &pb.Envelope_BrowseReq{
+			BrowseReq: &pb.BrowseRequest{
+				Path:       path,
+				LongFormat: longFormat,
+			},
+		},
+	}
+
+	resp, err := c.Request(env)
+	if err != nil {
+		return nil, err
+	}
+
+	if errResp := resp.GetError(); errResp != nil {
+		return nil, fmt.Errorf("browse error: %s", errResp.Message)
+	}
+
+	browseResp := resp.GetBrowseResp()
+	if browseResp == nil {
+		return nil, fmt.Errorf("unexpected response type")
+	}
+
+	return browseResp, nil
+}

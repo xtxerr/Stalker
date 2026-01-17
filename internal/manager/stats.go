@@ -9,6 +9,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/xtxerr/stalker/internal/store"
 )
 
 // =============================================================================
@@ -151,6 +153,36 @@ func (s *PollerStats) ClearDirty() {
 	s.dirty.Store(false)
 }
 
+// ToStoreStats converts the manager PollerStats to a store.PollerStatsRecord.
+func (s *PollerStats) ToStoreStats() *store.PollerStatsRecord {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var minPtr, maxPtr *int
+	if s.pollMsMin >= 0 {
+		min := s.pollMsMin
+		minPtr = &min
+	}
+	if s.pollMsMax > 0 {
+		max := s.pollMsMax
+		maxPtr = &max
+	}
+
+	return &store.PollerStatsRecord{
+		Namespace:    s.Namespace,
+		Target:       s.Target,
+		Poller:       s.Poller,
+		PollsTotal:   s.PollsTotal.Load(),
+		PollsSuccess: s.PollsSuccess.Load(),
+		PollsFailed:  s.PollsFailed.Load(),
+		PollsTimeout: s.PollsTimeout.Load(),
+		PollMsSum:    s.pollMsSum,
+		PollMsMin:    minPtr,
+		PollMsMax:    maxPtr,
+		PollMsCount:  s.pollMsCount,
+	}
+}
+
 // Reset resets all statistics.
 func (s *PollerStats) Reset() {
 	s.PollsTotal.Store(0)
@@ -284,6 +316,11 @@ func (m *StatsManager) GetAll() []*PollerStats {
 		result = append(result, stats)
 	}
 	return result
+}
+
+// GetAllStats is an alias for GetAll for backwards compatibility.
+func (m *StatsManager) GetAllStats() []*PollerStats {
+	return m.GetAll()
 }
 
 // Count returns the number of tracked pollers.

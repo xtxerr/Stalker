@@ -1,3 +1,9 @@
+//go:build ignore
+// +build ignore
+
+// NOTE: This file is excluded from build - tag index
+// will be used when browse.go is completed.
+
 package server
 
 import (

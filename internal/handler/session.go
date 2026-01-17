@@ -197,11 +197,29 @@ func (s *Session) HasSubscription(key string) bool {
 	return ok
 }
 
+// IsSubscribed is an alias for HasSubscription.
+func (s *Session) IsSubscribed(key string) bool {
+	return s.HasSubscription(key)
+}
+
 // ClearSubscriptions removes all subscriptions.
 func (s *Session) ClearSubscriptions() {
 	s.mu.Lock()
 	s.subscriptions = make(map[string]struct{})
 	s.mu.Unlock()
+}
+
+// UnsubscribeAll removes all subscriptions and returns the unsubscribed keys.
+func (s *Session) UnsubscribeAll() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	keys := make([]string, 0, len(s.subscriptions))
+	for k := range s.subscriptions {
+		keys = append(keys, k)
+	}
+	s.subscriptions = make(map[string]struct{})
+	return keys
 }
 
 // SubscriptionCount returns the number of active subscriptions.
@@ -652,6 +670,40 @@ func (sm *SessionManager) CountActive() int {
 		}
 	}
 	return count
+}
+
+// CountLost returns the number of lost (closed) sessions still in the map.
+func (sm *SessionManager) CountLost() int {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	count := 0
+	for _, s := range sm.sessions {
+		if s.IsClosed() {
+			count++
+		}
+	}
+	return count
+}
+
+// GetSubscribersFor returns all sessions subscribed to a key in a namespace.
+func (sm *SessionManager) GetSubscribersFor(namespace, key string) []*Session {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	fullKey := namespace + "/" + key
+	sessionIDs := sm.subscriptionIndex[fullKey]
+	if sessionIDs == nil {
+		return nil
+	}
+
+	sessions := make([]*Session, 0, len(sessionIDs))
+	for sid := range sessionIDs {
+		if session, ok := sm.sessions[sid]; ok && !session.IsClosed() {
+			sessions = append(sessions, session)
+		}
+	}
+	return sessions
 }
 
 // =============================================================================

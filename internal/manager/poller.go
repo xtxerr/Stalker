@@ -83,14 +83,12 @@ func (m *PollerManager) Load() error {
 		state, err := m.store.GetPollerState(p.Namespace, p.Target, p.Name)
 		if err == nil && state != nil {
 			ps := m.stateManager.Get(p.Namespace, p.Target, p.Name)
-			ps.AdminState = p.AdminState
-			ps.OperState = state.OperState
-			ps.HealthState = state.HealthState
-			ps.LastError = state.LastError
-			ps.ConsecutiveFailures = state.ConsecutiveFailures
-			ps.LastPollAt = state.LastPollAt
-			ps.LastSuccessAt = state.LastSuccessAt
-			ps.LastFailureAt = state.LastFailureAt
+			ps.SetAdminStateValue(p.AdminState)
+			ps.SetFromStoreState(state)
+		} else {
+			// Initialize state with admin state from poller
+			ps := m.stateManager.Get(p.Namespace, p.Target, p.Name)
+			ps.SetAdminStateValue(p.AdminState)
 		}
 
 		// Load stats from store
@@ -176,7 +174,7 @@ func (m *PollerManager) Create(p *store.Poller) error {
 
 	// Initialize state
 	state := m.stateManager.Get(p.Namespace, p.Target, p.Name)
-	state.AdminState = p.AdminState
+	state.SetAdminStateValue(p.AdminState)
 
 	// Initialize stats
 	m.statsManager.Get(p.Namespace, p.Target, p.Name)

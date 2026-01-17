@@ -91,17 +91,17 @@ func (h *TreeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // =============================================================================
-// Browse Handler
+// Browse Handler - types BrowseResponse and BrowseEntry defined in browse.go
 // =============================================================================
 
-// BrowseResponse is the response for browse requests.
-type BrowseResponse struct {
-	Path    string         `json:"path"`
-	Entries []BrowseEntry  `json:"entries"`
+// httpBrowseResponse is used for HTTP JSON responses (different from protobuf BrowseResponse).
+type httpBrowseResponse struct {
+	Path    string            `json:"path"`
+	Entries []httpBrowseEntry `json:"entries"`
 }
 
-// BrowseEntry represents a single entry in browse response.
-type BrowseEntry struct {
+// httpBrowseEntry is used for HTTP JSON responses.
+type httpBrowseEntry struct {
 	Name        string `json:"name"`
 	Path        string `json:"path"`
 	Type        string `json:"type"`
@@ -135,20 +135,18 @@ func (h *TreeHandler) handleBrowse(w http.ResponseWriter, r *http.Request, names
 	}
 
 	// Convert to response format
-	resp := BrowseResponse{
+	resp := httpBrowseResponse{
 		Path:    result.Path,
-		Entries: make([]BrowseEntry, len(result.Entries)),
+		Entries: make([]httpBrowseEntry, len(result.Entries)),
 	}
 
 	for i, e := range result.Entries {
-		resp.Entries[i] = BrowseEntry{
+		resp.Entries[i] = httpBrowseEntry{
 			Name:        e.Name,
 			Path:        e.Path,
 			Type:        e.Type,
 			LinkRef:     e.LinkRef,
 			Description: e.Description,
-			Source:      e.Source,
-			Priority:    e.Priority,
 		}
 	}
 

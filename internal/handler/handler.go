@@ -33,6 +33,17 @@ func (ctx *RequestContext) Namespace() (string, error) {
 	return ns, nil
 }
 
+// MustNamespace returns the session's bound namespace.
+// Panics if the session is not bound to a namespace.
+// Use this only after calling RequireNamespace.
+func (ctx *RequestContext) MustNamespace() string {
+	ns := ctx.Session.GetNamespace()
+	if ns == "" {
+		panic("MustNamespace called without namespace binding")
+	}
+	return ns
+}
+
 // HasNamespace returns true if the session is bound to a namespace.
 func (ctx *RequestContext) HasNamespace() bool {
 	return ctx.Session.IsBound()

@@ -9,6 +9,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/xtxerr/stalker/internal/store"
 )
 
 // =============================================================================
@@ -191,13 +193,15 @@ func (s *PollerState) IsRunning() bool {
 }
 
 // Enable sets the admin state to enabled.
-func (s *PollerState) Enable() {
+func (s *PollerState) Enable() error {
 	s.SetAdminState(AdminStateEnabled)
+	return nil
 }
 
 // Disable sets the admin state to disabled.
-func (s *PollerState) Disable() {
+func (s *PollerState) Disable() error {
 	s.SetAdminState(AdminStateDisabled)
+	return nil
 }
 
 // Start sets the operational state to running.
@@ -218,7 +222,7 @@ func (s *PollerState) Start() error {
 }
 
 // Stop sets the operational state to stopped.
-func (s *PollerState) Stop() {
+func (s *PollerState) Stop() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -226,6 +230,7 @@ func (s *PollerState) Stop() {
 		s.operState = OperStateStopped
 		s.dirty.Store(true)
 	}
+	return nil
 }
 
 // RecordSuccess records a successful poll.
@@ -279,6 +284,56 @@ func (s *PollerState) IsDirty() bool {
 // ClearDirty clears the dirty flag.
 func (s *PollerState) ClearDirty() {
 	s.dirty.Store(false)
+}
+
+// MarkClean is an alias for ClearDirty for backwards compatibility.
+func (s *PollerState) MarkClean() {
+	s.ClearDirty()
+}
+
+// ToStoreState converts the manager PollerState to a store.PollerState.
+func (s *PollerState) ToStoreState() *store.PollerState {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	return &store.PollerState{
+		Namespace:           s.Namespace,
+		Target:              s.Target,
+		Poller:              s.Poller,
+		OperState:           s.operState,
+		HealthState:         s.healthState,
+		LastError:           s.lastError,
+		ConsecutiveFailures: s.consecutiveFailures,
+		LastPollAt:          s.lastPollAt,
+		LastSuccessAt:       s.lastSuccessAt,
+		LastFailureAt:       s.lastFailureAt,
+	}
+}
+
+// SetFromStoreState updates the state from a store.PollerState.
+func (s *PollerState) SetFromStoreState(ss *store.PollerState) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.operState = ss.OperState
+	s.healthState = ss.HealthState
+	s.lastError = ss.LastError
+	s.consecutiveFailures = ss.ConsecutiveFailures
+	s.lastPollAt = ss.LastPollAt
+	s.lastSuccessAt = ss.LastSuccessAt
+	s.lastFailureAt = ss.LastFailureAt
+}
+
+// SetAdminStateValue sets the admin state directly (used during loading).
+func (s *PollerState) SetAdminStateValue(state string) {
+	s.mu.Lock()
+	s.adminState = state
+	s.mu.Unlock()
+}
+
+// GetDirtyStates is an alias for GetDirty for backwards compatibility.
+func (m *StateManager) GetDirtyStates() []*PollerState {
+	return m.GetDirty()
 }
 
 // =============================================================================

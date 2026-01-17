@@ -648,25 +648,8 @@ type SecretConfig struct {
 }
 
 // =============================================================================
-// Sync Configuration
+// Sync and Tree Configuration - main types defined in sync_integration.go
 // =============================================================================
-
-// SyncConfig configures YAML-to-database synchronization.
-type SyncConfig struct {
-	Default  string            `yaml:"default"`
-	Policies map[string]string `yaml:"policies"`
-}
-
-// =============================================================================
-// Tree Configuration
-// =============================================================================
-
-// TreeConfig configures the virtual filesystem.
-type TreeConfig struct {
-	Static map[string]interface{}      `yaml:"static"`
-	Views  map[string]*TreeViewConfig  `yaml:"views"`
-	Smart  map[string]*TreeSmartConfig `yaml:"smart"`
-}
 
 // TreeViewConfig defines a label-based view.
 type TreeViewConfig struct {

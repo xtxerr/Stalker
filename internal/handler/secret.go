@@ -36,7 +36,7 @@ func (h *SecretHandler) ListSecrets(ctx *RequestContext, req *ListSecretsRequest
 
 	secrets, err := h.mgr.Store().ListSecrets(namespace)
 	if err != nil {
-		return nil, Errorf(ErrInternal, "list secrets: %v", err)
+		return nil, ErrInternalf("list secrets: %v", err)
 	}
 
 	return &ListSecretsResponse{Secrets: secrets}, nil
@@ -66,10 +66,10 @@ func (h *SecretHandler) GetSecret(ctx *RequestContext, req *GetSecretRequest) (*
 
 	secret, err := h.mgr.Store().GetSecret(namespace, req.Name)
 	if err != nil {
-		return nil, Errorf(ErrInternal, "get secret: %v", err)
+		return nil, ErrInternalf("get secret: %v", err)
 	}
 	if secret == nil {
-		return nil, Errorf(ErrNotFound, "secret not found: %s", req.Name)
+		return nil, ErrNotFound("secret", req.Name)
 	}
 
 	return &GetSecretResponse{Secret: secret}, nil
@@ -101,21 +101,21 @@ func (h *SecretHandler) CreateSecret(ctx *RequestContext, req *CreateSecretReque
 
 	// Check if secret key is configured
 	if !h.mgr.Store().HasSecretKey() {
-		return nil, Errorf(ErrInvalidRequest, "secret encryption not configured on server")
+		return nil, ErrInvalidRequest("secret encryption not configured on server")
 	}
 
 	// Check if exists
 	exists, err := h.mgr.Store().SecretExists(namespace, req.Name)
 	if err != nil {
-		return nil, Errorf(ErrInternal, "check secret: %v", err)
+		return nil, ErrInternalf("check secret: %v", err)
 	}
 	if exists {
-		return nil, Errorf(ErrAlreadyExists, "secret already exists: %s", req.Name)
+		return nil, ErrAlreadyExists("secret", req.Name)
 	}
 
 	// Create
 	if err := h.mgr.Store().CreateSecret(namespace, req.Name, req.SecretType, req.Value); err != nil {
-		return nil, Errorf(ErrInternal, "create secret: %v", err)
+		return nil, ErrInternalf("create secret: %v", err)
 	}
 
 	secret, _ := h.mgr.Store().GetSecret(namespace, req.Name)
@@ -146,7 +146,7 @@ func (h *SecretHandler) UpdateSecret(ctx *RequestContext, req *UpdateSecretReque
 	namespace := ctx.MustNamespace()
 
 	if err := h.mgr.Store().UpdateSecret(namespace, req.Name, req.Value); err != nil {
-		return nil, Errorf(ErrInvalidRequest, err.Error())
+		return nil, ErrInvalidRequest(err.Error())
 	}
 
 	secret, _ := h.mgr.Store().GetSecret(namespace, req.Name)
@@ -178,7 +178,7 @@ func (h *SecretHandler) DeleteSecret(ctx *RequestContext, req *DeleteSecretReque
 
 	affected, err := h.mgr.Store().DeleteSecret(namespace, req.Name, req.Force)
 	if err != nil {
-		return nil, Errorf(ErrInvalidRequest, err.Error())
+		return nil, ErrInvalidRequest(err.Error())
 	}
 
 	return &DeleteSecretResponse{UsersAffected: affected}, nil
